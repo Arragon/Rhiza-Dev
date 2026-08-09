@@ -21,9 +21,11 @@
 - Chat 运行时必须从持久化的 `activeModelId` 解析供应商，Manifest 保存真实 Provider model ID。
 - Message 必须带 `nodeId`；Provider 历史只读取活动节点，避免支线探索污染主线对话。
 - 正式支线创建应原子写入 Node 与 `derived-from` Edge，并保存 `sourceMessageId`/`anchorText`；合并不复制完整历史，只写摘要引用和 `merged-into` Edge。
-- Graph 拖拽通过 Pointer Events 统一鼠标与触控；拖动期间本地更新坐标，Pointer Up 后调用位置 API，失败时由 App 回滚。
+- Graph 交互使用世界坐标与视口变换：Pointer Events 统一节点/画布鼠标与触控，节点拖动期间本地更新坐标，Pointer Up 后调用位置 API，失败时由 App 回滚；缩放围绕指针位置修正平移，避免画布跳动。
+- 图谱编辑通过 `/api/graph/nodes` 和 `/api/graph/edges` 持久化；删除节点必须阻止仍有子支线的节点，删除关系先选中关系再执行删除，避免误操作。
 - 临时支线必须保持“两阶段提交”：`/api/temp-chat` 只返回结果，点击保留后 `/api/nodes` 才迁移消息并创建正式关系。不要为了临时 AI 调用提前生成持久节点。
 - 节点层级由 `sourceNodeId` 动态计算；超过三层后停止增加视觉缩进，用 L-level 标签、压缩面包屑和“聚焦当前路径”降低方向迷失。
+- AI 输出统一经过 `MarkdownContent`，不要在 ChatView 内直接拼接 `dangerouslySetInnerHTML`；Mermaid 只允许通过 Mermaid 自身的 strict 安全模式渲染。
 
 ## 4. Testing Notes
 
@@ -32,7 +34,9 @@
 - API 集成测试使用临时目录，验证磁盘持久化并在测试结束后清理。
 - 安全测试必须证明 Provider JSON 和 HTTP 响应都不含测试用明文 Key。
 - 支线集成测试要覆盖创建、坐标持久化、合并状态、活动节点回切和语义边写入。
+- Graph 回归测试要覆盖画布缩放、节点/关系创建与删除，以及删除节点后的边和消息级联清理。
 - 临时支线测试必须比较调用前后的 Workspace 文件，证明 AI 请求没有隐式持久化；保留测试需要验证所有临时消息被重新分配到新节点。
+- Markdown 回归用例应覆盖语法解析和渲染容器，而不是只断言原始字符串存在；Mermaid 测试可 mock 动态模块，避免测试依赖浏览器布局。
 
 ## 5. UI/UX Notes
 

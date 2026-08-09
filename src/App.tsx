@@ -131,6 +131,26 @@ export function App() {
       setSyncError(error instanceof Error ? error.message : '节点位置保存失败');
     }
   };
+  const createGraphNode = async (input: { title: string; summary?: string; x: number; y: number }) => {
+    const { workspace } = await api.createGraphNode(input);
+    applyWorkspace(workspace);
+    setSyncError('');
+  };
+  const deleteGraphNode = async (id: string) => {
+    const { workspace } = await api.deleteGraphNode(id);
+    applyWorkspace(workspace);
+    setSyncError('');
+  };
+  const createGraphEdge = async (input: { source: string; target: string; relation: 'derived-from' | 'references' | 'merged-into'; label: string }) => {
+    const { workspace } = await api.createGraphEdge(input);
+    applyWorkspace(workspace);
+    setSyncError('');
+  };
+  const deleteGraphEdge = async (id: string) => {
+    const { workspace } = await api.deleteGraphEdge(id);
+    applyWorkspace(workspace);
+    setSyncError('');
+  };
   const mergeNode = async (id: string) => {
     const { workspace } = await api.mergeNode(id);
     applyWorkspace(workspace);
@@ -144,7 +164,7 @@ export function App() {
     <div className="ambient-grid" aria-hidden="true"/>
     <Sidebar view={view} nodes={discussionNodes} messages={messages} activeNodeId={activeNode.id} onView={setView} onNode={id => activateNode(id, true)} onSettings={openSettings}/>
     {view === 'chat' && <ChatView activeNode={activeNode} nodes={discussionNodes} mode={mode} activeCount={activeCount} messages={activeMessages} provider={provider} providerCatalog={providerCatalog} syncError={syncError} onSend={sendMessage} onTempSend={sendTemporaryMessage} onCreateBranch={createBranch} onMerge={mergeNode} onSelectModel={selectModel} onSettings={openSettings} onOpenContext={() => setContextOpen(open => !open)} onGraph={() => setView('graph')}/>} 
-    {view === 'graph' && <GraphView nodes={discussionNodes} edges={discussionEdges} activeNodeId={activeNode.id} onMove={moveNode} onActivate={id => activateNode(id, true)}/>}
+    {view === 'graph' && <GraphView nodes={discussionNodes} edges={discussionEdges} activeNodeId={activeNode.id} onMove={moveNode} onActivate={id => activateNode(id, true)} onCreateNode={createGraphNode} onDeleteNode={deleteGraphNode} onCreateEdge={createGraphEdge} onDeleteEdge={deleteGraphEdge}/>}
     {view === 'state' && <StateView/>}
     <div className="context-backdrop" onClick={() => setContextOpen(false)}/>
     <ContextPanel items={contextItems} mode={mode} onMode={updateMode} onStatus={updateStatus}/>

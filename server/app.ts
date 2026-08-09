@@ -9,6 +9,7 @@ import type { WorkspaceStore } from './store';
 
 const contextStatuses = new Set<ContextStatus>(['active', 'recommended', 'excluded']);
 const contextModes = new Set<ContextMode>(['Auto', 'Assisted', 'Strict']);
+const edgeRelations = new Set(['derived-from', 'references', 'merged-into']);
 
 export function createApp(store: WorkspaceStore, provider: ProviderService, serveFrontend = false) {
   const app = express();
@@ -107,6 +108,23 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
     } catch (error) { next(error); }
   });
 
+  app.post('/api/graph/nodes', async (request, response, next) => {
+    try {
+      const title = typeof request.body?.title === 'string' ? request.body.title.trim() : '';
+      const summary = typeof request.body?.summary === 'string' ? request.body.summary.trim().slice(0, 500) : '';
+      const x = Number(request.body?.x ?? 180);
+      const y = Number(request.body?.y ?? 140);
+      if (!title || title.length > 120) return response.status(400).json({ error: { code: 'INVALID_NODE_TITLE', message: '节点标题不能为空且不能超过 120 字符。' } });
+      if (!Number.isFinite(x) || !Number.isFinite(y) || x < 0 || y < 0 || x > 5000 || y > 5000) return response.status(400).json({ error: { code: 'INVALID_POSITION', message: '节点坐标无效。' } });
+      const workspace = await store.update(current => {
+        const createdAt = new Date().toISOString();
+        const node = { id: randomUUID(), title, summary: summary || '尚未补充讨论摘要。', status: 'draft' as const, kind: 'branch' as const, x: Math.round(x), y: Math.round(y), createdAt, updatedAt: createdAt };
+        return { ...current, discussionNodes: [...current.discussionNodes, node] };
+      });
+      response.status(201).json({ workspace });
+    } catch (error) { next(error); }
+  });
+
   app.post('/api/temp-chat', async (request, response, next) => {
     try {
       const sourceNodeId = typeof request.body?.sourceNodeId === 'string' ? request.body.sourceNodeId : '';
@@ -152,6 +170,63 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
         return { ...node, x: Math.round(x), y: Math.round(y), updatedAt: new Date().toISOString() };
       }) }));
       if (!found) return response.status(404).json({ error: { code: 'NODE_NOT_FOUND', message: '讨论节点不存在。' } });
+      response.json({ workspace });
+    } catch (error) { next(error); }
+  });
+
+  app.delete('/api/graph/nodes/:id', async (request, response, next) => {
+    try {
+      const workspace = await store.update(current => {
+        const node = current.discussionNodes.find(item => item.id === request.params.id);
+        if (!node) throw new ProviderError('讨论节点不存在。', 404, 'NODE_NOT_FOUND');
+        if (current.discussionNodes.length <= 1) throw new ProviderError('至少需要保留一个讨论节点。', 409, 'CANNOT_DELETE_LAST_NODE');
+        if (current.discussionNodes.some(item => item.sourceNodeId === node.id)) throw new ProviderError('该节点仍有子支线，请先删除子支线。', 409, 'NODE_HAS_CHILDREN');
+        const remainingNodes = current.discussionNodes.filter(item => item.id !== node.id);
+        const fallback = remainingNodes.find(item => item.id === node.sourceNodeId) || remainingNodes[0];
+        const removedManifestIds = new Set(current.messages.filter(message => message.nodeId === node.id && message.manifestId).map(message => message.manifestId));
+        const messages = current.messages.filter(message => message.nodeId !== node.id);
+        return {
+          ...current,
+          activeNodeId: current.activeNodeId === node.id ? fallback.id : current.activeNodeId,
+          nodeId: current.nodeId === node.id ? fallback.id : current.nodeId,
+          messages,
+          manifests: current.manifests.filter(manifest => !removedManifestIds.has(manifest.id)),
+          discussionNodes: remainingNodes,
+          discussionEdges: current.discussionEdges.filter(edge => edge.source !== node.id && edge.target !== node.id),
+        };
+      });
+      response.json({ workspace });
+    } catch (error) { next(error); }
+  });
+
+  app.post('/api/graph/edges', async (request, response, next) => {
+    try {
+      const source = typeof request.body?.source === 'string' ? request.body.source : '';
+      const target = typeof request.body?.target === 'string' ? request.body.target : '';
+      const relation = typeof request.body?.relation === 'string' ? request.body.relation : 'references';
+      const label = typeof request.body?.label === 'string' ? request.body.label.trim().slice(0, 120) : '';
+      if (!source || !target || source === target || !edgeRelations.has(relation)) return response.status(400).json({ error: { code: 'INVALID_EDGE', message: '关系必须连接两个不同的节点，并使用有效关系类型。' } });
+      if (!label) return response.status(400).json({ error: { code: 'INVALID_EDGE_LABEL', message: '关系标签不能为空。' } });
+      const workspace = await store.update(current => {
+        if (!current.discussionNodes.some(node => node.id === source) || !current.discussionNodes.some(node => node.id === target)) throw new ProviderError('关系节点不存在。', 404, 'NODE_NOT_FOUND');
+        if (current.discussionEdges.some(edge => edge.source === source && edge.target === target && edge.relation === relation)) throw new ProviderError('相同关系已经存在。', 409, 'EDGE_ALREADY_EXISTS');
+        const createdAt = new Date().toISOString();
+        const edge = { id: randomUUID(), source, target, relation: relation as 'derived-from' | 'references' | 'merged-into', label, createdAt };
+        return { ...current, discussionEdges: [...current.discussionEdges, edge] };
+      });
+      response.status(201).json({ workspace });
+    } catch (error) { next(error); }
+  });
+
+  app.delete('/api/graph/edges/:id', async (request, response, next) => {
+    try {
+      let found = false;
+      const workspace = await store.update(current => ({ ...current, discussionEdges: current.discussionEdges.filter(edge => {
+        if (edge.id !== request.params.id) return true;
+        found = true;
+        return false;
+      }) }));
+      if (!found) return response.status(404).json({ error: { code: 'EDGE_NOT_FOUND', message: '关系不存在。' } });
       response.json({ workspace });
     } catch (error) { next(error); }
   });

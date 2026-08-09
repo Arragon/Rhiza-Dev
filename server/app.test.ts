@@ -80,6 +80,21 @@ describe('RabbitHole API', () => {
     expect(JSON.parse(await readFile(filePath, 'utf8')).discussionNodes).toHaveLength(2);
   });
 
+  it('creates and deletes graph nodes and semantic edges', async () => {
+    const { app } = await testApp();
+    const createdNode = await request(app).post('/api/graph/nodes').send({ title: '检索实验', summary: '验证关系图谱编辑能力', x: 620, y: 280 }).expect(201);
+    const node = createdNode.body.workspace.discussionNodes.find((item: { title: string }) => item.title === '检索实验');
+    expect(node).toMatchObject({ status: 'draft', kind: 'branch', x: 620, y: 280 });
+    const createdEdge = await request(app).post('/api/graph/edges').send({ source: 'information-architecture', target: node.id, relation: 'references', label: '实验关联' }).expect(201);
+    const edge = createdEdge.body.workspace.discussionEdges[0];
+    expect(edge).toMatchObject({ source: 'information-architecture', target: node.id, relation: 'references', label: '实验关联' });
+    await request(app).delete(`/api/graph/edges/${edge.id}`).expect(200);
+    await request(app).delete(`/api/graph/nodes/${node.id}`).expect(200);
+    const workspace = await request(app).get('/api/workspace').expect(200);
+    expect(workspace.body.workspace.discussionNodes).toHaveLength(1);
+    expect(workspace.body.workspace.discussionEdges).toHaveLength(0);
+  });
+
   it('runs temporary branch chat without persisting workspace state', async () => {
     const { app, filePath } = await testApp();
     await request(app).get('/api/workspace').expect(200);

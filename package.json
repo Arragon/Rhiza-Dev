@@ -19,9 +19,15 @@
     "@vitejs/plugin-react": "latest",
     "dotenv": "latest",
     "express": "latest",
+    "katex": "^0.18.3",
     "lucide-react": "latest",
+    "mermaid": "^11.16.1",
     "react": "latest",
     "react-dom": "latest",
+    "react-markdown": "^10.1.0",
+    "rehype-katex": "^7.0.1",
+    "remark-gfm": "^4.0.1",
+    "remark-math": "^6.0.0",
     "vite": "latest"
   },
   "devDependencies": {
@@ -34,8 +40,8 @@
     "concurrently": "latest",
     "jsdom": "^29.0.1",
     "supertest": "latest",
-    "tsx": "latest",
     "tsup": "latest",
+    "tsx": "latest",
     "typescript": "latest",
     "vitest": "latest"
   }

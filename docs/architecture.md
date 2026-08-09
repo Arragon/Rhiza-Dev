@@ -12,6 +12,8 @@ RabbitHole 是基于产品设计书构建的全栈网页端 MVP。它验证“�
 - OpenAI-compatible Provider：第三方模型适配、超时和错误归一化
 - JSON 原子存储：本地持久化消息、Context 状态与 Manifest
 - Lucide React：统一图标系统
+- react-markdown / remark-gfm：Markdown 与 GitHub Flavored Markdown
+- remark-math / rehype-katex / Mermaid：数学公式、LaTeX 和流程图渲染
 - Vitest + Testing Library：组件行为测试
 - 原生 CSS：设计令牌、响应式布局、动画和轻量点阵效果
 
@@ -40,10 +42,11 @@ RabbitHole 是基于产品设计书构建的全栈网页端 MVP。它验证“�
 
 - `App` 管理当前主视图、活动讨论节点、节点/边集合、上下文条目状态与窄屏面板状态。
 - `ChatView` 按活动节点过滤多轮讨论，使用 Selection API 捕获回答划线内容，并在当前讨论旁打开不落盘的临时支线工作台；用户显式保留后才固化为正式节点。
+- `MarkdownContent` 负责 AI 输出的统一渲染：`react-markdown` + GFM、`remark-math` + KaTeX 数学公式，以及懒加载 Mermaid 流程图；消息组件不再直接输出 AI 原文。
 - `Sidebar` 依据 `sourceNodeId` 构建可折叠节点树，提供活动路径、深度标识和深层路径聚焦。
 - `ProviderSettings` 管理供应商连接和模型目录；`ModelSelector` 在调用前选择当前模型。
 - `ContextPanel` 显示 Active、Recommended、Excluded Context 和预算。
-- `GraphView` 从 Workspace 渲染真实讨论节点与语义边，支持 Pointer Events 拖拽并持久化坐标；点击节点会激活对应讨论流。
+- `GraphView` 从 Workspace 渲染真实讨论节点与语义边，支持 Pointer Events 节点拖拽、空白画布平移、滚轮/按钮缩放、关系连接与节点/关系删除；坐标和编辑结果都通过 API 持久化，点击节点会激活对应讨论流。
 - `StateView` 区分当前有效事实、约束、决策与开放问题。
 
 ## 5. Frontend Architecture
@@ -63,6 +66,8 @@ Express 后端暴露以下边界：
 - `POST /api/temp-chat`：围绕选中锚点调用 AI；请求与回复不写入 Workspace
 - `POST /api/nodes/:id/activate`：切换活动讨论节点
 - `PATCH /api/nodes/:id/position`：持久化 Graph 节点坐标
+- `POST /api/graph/nodes`、`DELETE /api/graph/nodes/:id`：创建和删除图谱节点
+- `POST /api/graph/edges`、`DELETE /api/graph/edges/:id`：创建和删除语义关系
 - `POST /api/nodes/:id/merge`：选择性合并支线摘要、写入主线引用并生成 `merged-into` 关系
 - `GET/POST/PUT /api/providers`：读取、新增和更新安全裁剪后的供应商配置
 - `POST /api/providers/:id/discover`：从兼容 `/models` 接口同步模型
@@ -73,13 +78,15 @@ Express 后端暴露以下边界：
 
 ## 7. Data Flow
 
-网页加载时从 `/api/workspace` 恢复持久状态。每条 Message 归属一个 Discussion Node；Sidebar、Chat 与 Graph 共用 `activeNodeId`。临时支线只保存在当前 React 会话，`/api/temp-chat` 会调用模型但不写盘；用户点击保留时，临时消息随 Node 与 `derived-from` Edge 原子写入。Sidebar 从节点的 `sourceNodeId` 计算树、活动路径和深度，不在存储中维护易失真的冗余 depth。合并时只把摘要引用写回来源主线并保留审计关系。
+网页加载时从 `/api/workspace` 恢复持久状态。每条 Message 归属一个 Discussion Node；Sidebar、Chat 与 Graph 共用 `activeNodeId`。AI Message 进入 `MarkdownContent`，先解析 GFM 和数学语法，遇到 Mermaid 代码块时懒加载图表引擎并在隔离容器中渲染。临时支线只保存在当前 React 会话，`/api/temp-chat` 会调用模型但不写盘；用户点击保留时，临时消息随 Node 与 `derived-from` Edge 原子写入。Sidebar 从节点的 `sourceNodeId` 计算树、活动路径和深度，不在存储中维护易失真的冗余 depth。
 
 ## 8. Testing Strategy
 
 - `npm test`：验证前端 API 接线、Context 持久化、输入校验、Provider 请求格式、未配置错误与 Manifest 写入。
 - `npm run build`：执行 TypeScript 严格检查、Vite 前端构建和 tsup 服务端构建。
-- 浏览器人工验证：检查三栏布局、移动断点、滚动、抽屉和关键交互。
+- 浏览器人工验证：检查三栏布局、移动断点、滚动、抽屉、Graph 缩放/平移、节点/关系编辑和关键交互。
+- Graph 组件与 API 测试：验证缩放、节点创建/删除、关系创建/删除及后端持久化。
+- Markdown 组件测试：验证 GFM 表格/任务列表、KaTeX 公式和 Mermaid SVG 输出。
 
 ## 9. Development Conventions
 
@@ -91,8 +98,9 @@ Express 后端暴露以下边界：
 ## 10. Known Constraints
 
 - AI 回复已连接真实 Provider；Context Planner 推荐与冲突检测仍为演示数据。
-- Graph 已支持节点拖拽与坐标持久化，但尚未实现缩放、框选、自动布局和超大图虚拟化。
+- Graph 已支持缩放、平移、节点拖拽、节点/关系编辑与坐标持久化；框选、自动布局和超大图虚拟化仍未实现。
 - 当前使用本机 JSON 存储，不支持多用户并发、身份认证、权限和跨项目隔离。
 - Provider 适配范围是 OpenAI-compatible Chat Completions；非兼容协议需要新增 Adapter。
 - 模型自动发现要求供应商实现 OpenAI-compatible `/models`；不支持时可手动添加模型 ID。
 - 临时支线不跨刷新恢复，这是当前“未保留即丢弃”的明确产品语义；正式支线与 Graph 布局已持久化，Project State 编辑仍未接入持久化 API。
+- Mermaid 与 KaTeX 会增加前端资源体积；Mermaid 采用动态加载，后续可继续拆分 Markdown 渲染入口或按消息能力加载。

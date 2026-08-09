@@ -1,0 +1,42 @@
+{
+  "name": "rabbithole-mvp",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "concurrently -k -n web,api -c cyan,green \"vite --host 127.0.0.1 --port 4173\" \"tsx watch server/index.ts\"",
+    "dev:web": "vite --host 127.0.0.1 --port 4173",
+    "dev:api": "tsx watch server/index.ts",
+    "build": "tsc -b && vite build && tsup server/index.ts --format esm --platform node --out-dir dist-server --clean",
+    "start": "node dist-server/index.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@fontsource/dm-mono": "latest",
+    "@fontsource/manrope": "latest",
+    "@fontsource/newsreader": "latest",
+    "@vitejs/plugin-react": "latest",
+    "dotenv": "latest",
+    "express": "latest",
+    "lucide-react": "latest",
+    "react": "latest",
+    "react-dom": "latest",
+    "vite": "latest"
+  },
+  "devDependencies": {
+    "@testing-library/jest-dom": "latest",
+    "@testing-library/react": "latest",
+    "@types/express": "latest",
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@types/supertest": "latest",
+    "concurrently": "latest",
+    "jsdom": "^29.0.1",
+    "supertest": "latest",
+    "tsx": "latest",
+    "tsup": "latest",
+    "typescript": "latest",
+    "vitest": "latest"
+  }
+}

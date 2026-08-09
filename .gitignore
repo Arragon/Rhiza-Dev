@@ -1,0 +1,9 @@
+node_modules/
+dist/
+dist-server/
+.playwright-cli/
+output/playwright/
+*.tsbuildinfo
+.env
+var/data/*.json
+var/data/.provider-key

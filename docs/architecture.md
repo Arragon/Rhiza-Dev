@@ -2,7 +2,9 @@
 
 ## 1. Overview
 
-RabbitHole 是基于产品设计书构建的全栈网页端 MVP。它验证“对话网络 + 显式上下文 + 当前知识状态”的核心产品命题，并通过动态 Provider Registry 连接多个 OpenAI-compatible 模型供应商。项目和模型目录以原子 JSON 文件持久化，API Key 使用本机 AES-256-GCM 密钥加密。
+根系（Rhiza）是基于产品设计书构建的全栈网页端 MVP。它验证“对话网络 + 显式上下文 + 当前知识状态”的核心产品命题，并通过动态 Provider Registry 连接多个 OpenAI-compatible 模型供应商。项目和模型目录以原子 JSON 文件持久化，API Key 使用本机 AES-256-GCM 密钥加密。
+
+当前仓库不是 LibreChat fork。按照技术设计书 v2.0，现有 `server/provider-*` 承担当前 API 配置的 Runtime Adapter 职责；`librechat-data-provider` 提供共享 Model Spec 与文件策略，Rhiza 的 Project、Node、Edge、Context 与 State 语义保持独立。后续迁移仍应扩展 Runtime 能力，而不是让 LibreChat Conversation/Mongo schema 进入 Rhiza Domain。详细映射见 `docs/librechat-migration.md`。
 
 ## 2. Tech Stack
 
@@ -10,6 +12,7 @@ RabbitHole 是基于产品设计书构建的全栈网页端 MVP。它验证“�
 - Vite：开发服务器与生产构建
 - Express：Workspace、Context 与 Chat API
 - OpenAI-compatible Provider：第三方模型适配、超时和错误归一化
+- librechat-data-provider：LibreChat Model Spec、endpoint 枚举与文件能力策略
 - JSON 原子存储：本地持久化消息、Context 状态与 Manifest
 - Lucide React：统一图标系统
 - react-markdown / remark-gfm：Markdown 与 GitHub Flavored Markdown
@@ -25,6 +28,9 @@ RabbitHole 是基于产品设计书构建的全栈网页端 MVP。它验证“�
 - `src/types.ts`：核心前端类型
 - `src/api.ts`：浏览器 API 客户端与统一错误类型
 - `server/app.ts`：HTTP 路由、输入校验与错误边界
+- `server/ai-runtime.ts`：Rhiza 自有的模型目录、生成请求与 Runtime Event 稳定契约
+- `server/provider-runtime.ts`：当前 OpenAI-compatible Provider 到 `AIRuntime` 的临时适配器
+- `server/librechat-shared.ts`：LibreChat Model Spec、文件策略与 Agent 消息格式适配
 - `server/ai-provider.ts`：第三方 AI 协议适配与 Prompt 组装
 - `server/provider-service.ts`：多供应商注册、模型发现、选择与调用编排
 - `server/provider-store.ts`：供应商和模型目录持久化
@@ -37,6 +43,7 @@ RabbitHole 是基于产品设计书构建的全栈网页端 MVP。它验证“�
 - `app/static/css/tokens.css`：可替换的设计令牌层
 - `app/static/css/app.css`：组件和响应式样式层
 - `product-design.md`：从原始 Word 设计书提取的工作副本
+- `docs/librechat-migration.md`：当前 MVP 到 LibreChat Runtime clean-base 的迁移边界、模块映射与验收门槛
 
 ## 4. Core Modules
 
@@ -61,7 +68,8 @@ Express 后端暴露以下边界：
 - `GET /api/workspace`：项目、消息、Context 和 Manifest 快照
 - `PATCH /api/workspace/mode`：持久化 Context 控制模式
 - `PATCH /api/workspace/context/:id`：持久化 Context 生命周期状态
-- `POST /api/chat`：冻结 Active Context、调用 Provider、保存消息与 Manifest
+- `POST /api/chat/stream`：冻结 Active Context，以 SSE 转发 Runtime Event，并在 `RUN_END` 后保存消息与 Manifest
+- `POST /api/chat`：兼容性非流式入口，消费相同 Runtime Event 并返回最终结果
 - `POST /api/nodes`：从当前节点或消息锚点创建正式支线和 `derived-from` 关系
 - `POST /api/temp-chat`：围绕选中锚点调用 AI；请求与回复不写入 Workspace
 - `POST /api/nodes/:id/activate`：切换活动讨论节点
@@ -74,11 +82,11 @@ Express 后端暴露以下边界：
 - `PATCH /api/models/:id`：持久化收藏与置顶状态
 - `POST /api/models/:id/select`：切换当前模型
 
-`ProviderService` 根据当前 Model Record 找到供应商，临时解密 API Key，再构造 `OpenAiCompatibleProvider` 完成调用。解密后的 Key 不进入 Workspace、日志或 HTTP 响应。模型目录按置顶、收藏和名称排序。
+`ProviderRuntime` 实现 Rhiza `AIRuntime`，使用当前 Provider Catalog/API Key 把 OpenAI-compatible SSE 归一化为 `RUN_START`、一个或多个 `CONTENT_DELTA`、`RUN_END` 或 `RUN_ERROR`。模型目录通过 LibreChat `tModelSpecSchema` 形成 Model Spec，当前 endpoint 的文件数量、大小和 MIME 能力由 LibreChat file config 计算；Chat payload 采用 system/history/current-user 的角色化 Agent 消息格式。LibreChat 数据库对象不会进入 Rhiza Domain。
 
 ## 7. Data Flow
 
-网页加载时从 `/api/workspace` 恢复持久状态。每条 Message 归属一个 Discussion Node；Sidebar、Chat 与 Graph 共用 `activeNodeId`。AI Message 进入 `MarkdownContent`，先解析 GFM 和数学语法，遇到 Mermaid 代码块时懒加载图表引擎并在隔离容器中渲染。临时支线只保存在当前 React 会话，`/api/temp-chat` 会调用模型但不写盘；用户点击保留时，临时消息随 Node 与 `derived-from` Edge 原子写入。Sidebar 从节点的 `sourceNodeId` 计算树、活动路径和深度，不在存储中维护易失真的冗余 depth。
+网页加载时从 `/api/workspace` 恢复持久状态。每条 Message 归属一个 Discussion Node；Sidebar、Chat 与 Graph 共用 `activeNodeId`。发送消息时 Product API 先冻结 `projectId`、`nodeId`、`requestId`、Model Profile 与 Context Items，再以 Manifest ID 调用 `AIRuntime`；浏览器通过 POST SSE 逐段消费 `CONTENT_DELTA` 并更新临时 Assistant Message。只有 Runtime 返回 `RUN_END` 后，服务端才把 User Message、Assistant Message 与 Manifest 原子写入；`RUN_ERROR` 不落盘。AI Message 进入 `MarkdownContent`，先解析 GFM 和数学语法，遇到 Mermaid 代码块时懒加载图表引擎并在隔离容器中渲染。临时支线只保存在当前 React 会话，`/api/temp-chat` 通过同一 Runtime 契约调用模型但不写盘；用户点击保留时，临时消息随 Node 与 `derived-from` Edge 原子写入。Sidebar 从节点的 `sourceNodeId` 计算树、活动路径和深度，不在存储中维护易失真的冗余 depth。
 
 ## 8. Testing Strategy
 
@@ -100,6 +108,7 @@ Express 后端暴露以下边界：
 - AI 回复已连接真实 Provider；Context Planner 推荐与冲突检测仍为演示数据。
 - Graph 已支持缩放、平移、节点拖拽、节点/关系编辑与坐标持久化；框选、自动布局和超大图虚拟化仍未实现。
 - 当前使用本机 JSON 存储，不支持多用户并发、身份认证、权限和跨项目隔离。
+- 已 fetch 并验证技术设计书指定 LibreChat v0.8.7 tag，`librechat-v0.8.7` 分支固定指向 commit `9e74cc0e...`，Rhiza 集成工作位于 `codex/rhiza-librechat-runtime`。当前 Provider/API Key 仍是唯一模型执行配置；已接入 `librechat-data-provider@0.8.509` 的 Model Spec 和文件策略。完整 Agent 包要求 Node.js 24，而当前环境为 Node.js 22，因此 Agent/MCP、实际文件上传与解析、PostgreSQL、统一 Auth、License Gate 和 SBOM 属于后续工作。
 - Provider 适配范围是 OpenAI-compatible Chat Completions；非兼容协议需要新增 Adapter。
 - 模型自动发现要求供应商实现 OpenAI-compatible `/models`；不支持时可手动添加模型 ID。
 - 临时支线不跨刷新恢复，这是当前“未保留即丢弃”的明确产品语义；正式支线与 Graph 布局已持久化，Project State 编辑仍未接入持久化 API。

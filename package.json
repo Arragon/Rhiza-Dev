@@ -1,5 +1,5 @@
 {
-  "name": "rabbithole-mvp",
+  "name": "rhiza-mvp",
   "private": true,
   "version": "0.1.0",
   "type": "module",
@@ -20,6 +20,7 @@
     "dotenv": "latest",
     "express": "latest",
     "katex": "^0.18.3",
+    "librechat-data-provider": "0.8.509",
     "lucide-react": "latest",
     "mermaid": "^11.16.1",
     "react": "latest",

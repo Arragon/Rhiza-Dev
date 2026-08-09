@@ -15,6 +15,7 @@ describe('OpenAiCompatibleProvider', () => {
       const body = JSON.parse(String(init?.body));
       expect(body.model).toBe('provider-model');
       expect(body.messages[0].content).toContain('[Fact] 访谈');
+      expect(body.messages[0].content).toContain('根系（Rhiza）');
       expect((init?.headers as Record<string, string>).Authorization).toBe('Bearer secret-test-key');
       return new Response(JSON.stringify({ choices: [{ message: { content: '真实回答' } }] }), { status: 200 });
     }) as unknown as typeof fetch;
@@ -31,5 +32,23 @@ describe('OpenAiCompatibleProvider', () => {
     const provider = new OpenAiCompatibleProvider({ ...config, apiKey: '' });
     await expect(provider.complete({ prompt: 'test', mode: 'Strict', history: [], contextItems: [] }))
       .rejects.toMatchObject<Partial<ProviderError>>({ code: 'PROVIDER_NOT_CONFIGURED', status: 503 });
+  });
+
+  it('normalizes OpenAI-compatible SSE chunks into text deltas', async () => {
+    const fetcher = vi.fn(async (_url: string | URL | Request, init?: RequestInit) => {
+      expect(JSON.parse(String(init?.body)).stream).toBe(true);
+      return new Response([
+        'data: {"choices":[{"delta":{"content":"流式"}}]}',
+        '',
+        'data: {"choices":[{"delta":{"content":"回答"}}]}',
+        '',
+        'data: [DONE]',
+        '',
+      ].join('\n'), { status: 200, headers: { 'Content-Type': 'text/event-stream' } });
+    }) as unknown as typeof fetch;
+    const provider = new OpenAiCompatibleProvider(config, fetcher);
+    const deltas: string[] = [];
+    for await (const delta of provider.stream({ prompt: '继续分析', mode: 'Assisted', history: [], contextItems: [] })) deltas.push(delta);
+    expect(deltas).toEqual(['流式', '回答']);
   });
 });

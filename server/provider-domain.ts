@@ -40,4 +40,19 @@ export interface ProviderSnapshot {
   providers: SafeProvider[];
   models: ModelRecord[];
   activeModelId: string | null;
+  modelSpecs: Array<{
+    name: string;
+    label: string;
+    group?: string;
+    description?: string;
+    preset: { endpoint?: string | null; endpointType?: string | null; model?: string | null };
+  }>;
+  filePolicy: {
+    disabled: boolean;
+    maxFiles: number;
+    maxFileSizeBytes: number;
+    maxTotalSizeBytes: number;
+    fileTokenLimit: number;
+    supportedMimeTypes: string[];
+  };
 }

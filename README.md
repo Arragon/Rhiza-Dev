@@ -1,6 +1,8 @@
-# RabbitHole MVP
+# 根系 / Rhiza MVP
 
-RabbitHole 是一个面向复杂、多轮 AI 工作流的上下文工作空间 MVP。它包含持久化后端、可审计 Context Manifest、多供应商模型目录，以及适配 OpenAI-compatible 第三方模型服务的安全服务端代理。
+根系（Rhiza）是一个面向复杂、多轮 AI 工作流的 Context-native 工作空间 MVP。它把 Project、Conversation Graph、Context Manifest 与 Project State 作为产品领域对象，并通过独立的 Provider 边界连接 OpenAI-compatible 第三方模型服务。
+
+> 当前仓库是用于验证 Rhiza 产品交互的轻量 React/Express 实现。运行时选择性复用锁定 LibreChat v0.8.7 对应的数据模型与文件策略，不复制其产品领域。迁移关系及缺口见 [`docs/librechat-migration.md`](docs/librechat-migration.md)。
 
 ## 本地运行
 
@@ -40,6 +42,10 @@ AI_MODEL=qwen3:8b
 
 首次启动且模型目录为空时，后端会用 `.env` 初始化一个供应商。之后可直接在网页中管理供应商和模型。
 
+### LibreChat 能力复用
+
+模型仍通过上面的当前 API 配置执行，不需要额外部署 LibreChat。项目固定使用 `librechat-data-provider@0.8.509`，复用 LibreChat 的 Model Spec 校验、endpoint 归一化和文件 MIME/大小策略；Agent Prompt 则沿用其角色化消息顺序，并保留 Rhiza 的 Context Manifest 语义。完整 Agent/MCP 和文件上传处理会在后续基础设施迁移中继续接入。
+
 ### 生产式本地运行
 
 ```bash
@@ -58,11 +64,11 @@ npm run build
 
 ## MVP 能力
 
-- 默认聚焦的节点级讨论流与真实第三方 AI 回复
+- 默认聚焦的节点级讨论流与真实第三方 AI 流式回复
 - Assisted / Auto / Strict 上下文模式
 - 上下文预算、角色、推荐原因、加入和排除
-- Discussion Graph 与冲突状态提示
-- 可持久化拖拽的 Discussion Graph，节点点击与讨论流双向联动
+- Conversation Graph 与冲突状态提示
+- 可持久化拖拽的 Conversation Graph，节点点击与讨论流双向联动
 - 从任意 AI 回答创建正式支线、独立讨论，并将支线结论选择性合并回主线
 - 划线或选择整段回答后，在当前讨论旁打开临时 AI 对话；只有点击“保留”才进入节点树和图谱
 - 可折叠的层级讨论节点树、活动路径导航、深层缩进压缩与路径聚焦
@@ -74,3 +80,5 @@ npm run build
 - 对话、上下文模式、Context 状态和 Manifest 的本地持久化
 - Provider 超时、未配置、上游错误和非法响应的明确反馈
 - 多供应商配置、模型发现、动态模型选择、收藏和置顶
+- 稳定 `AIRuntime` / `RuntimeEvent` 边界；对话请求在执行前冻结 Project、Node、Model Profile 与 Context Manifest
+- POST SSE 对话通道；浏览器增量渲染回答，只有完整结束后才原子持久化消息与 Manifest

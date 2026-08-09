@@ -2,7 +2,7 @@
 
 ## 1. Common Problems
 
-- ContextGraph 的对象层级较多，若直接把所有功能平铺在首屏，会违背“默认简单、渐进暴露”的产品原则。
+- Rhiza 的对象层级较多，若直接把所有功能平铺在首屏，会违背“默认简单、渐进暴露”的产品原则。
 - Node 是语义讨论单元，不是单条消息；Graph 不应按消息数量增长。
 
 ## 2. Proven Solutions
@@ -10,6 +10,11 @@
 - 默认保留 Chat 聚焦区，把 Context Inspector 放在邻接面板，Graph 与 Project State 放在同级主视图。
 - 使用 Active、Recommended、Excluded 三段表达 Context 生命周期，用角色标签表达语义地位。
 - 将视觉语言收敛到 `app/static/css/tokens.css`，以降低后续风格改版成本。
+- 品牌使用中文主名“根系”和英文标识“Rhiza”；旧的 RabbitHole 仅可作为历史数据 ID 保留，不再出现在用户可见界面、日志或系统提示词中。
+- LibreChat 只能实现 `AIRuntime` 边界。迁移 UI 时复用交互能力，不复用 LibreChat Conversation/Mongo 领域结构。
+- LibreChat `BaseClient.sendMessage` 与客户端 SSE handler 可作为 Runtime Event 映射来源；Rhiza 应消费稳定事件协议，不直接调用 controller 或数据库保存函数。
+- 浏览器流式请求使用 POST + `fetch().body` 读取 SSE，因为生成请求需要携带冻结前的用户输入；不要用只能 GET 的原生 `EventSource` 反向改变 API 语义。
+- LibreChat 的低耦合共享能力优先从精确锁定的 `librechat-data-provider` 引入；Model Spec 和文件策略可直接复用，领域 Prompt 只对齐其角色化消息顺序。
 
 ## 3. Development Notes
 
@@ -19,6 +24,10 @@
 - Workspace 更新通过串行队列与临时文件替换，避免多个请求交错造成 JSON 部分写入。
 - API Key 使用随机本机密钥进行 AES-256-GCM 加密；安全响应只返回 `hasApiKey`，永不返回密文或明文。
 - Chat 运行时必须从持久化的 `activeModelId` 解析供应商，Manifest 保存真实 Provider model ID。
+- 模型选择必须在生成前冻结为 Runtime `modelId`；不要在请求执行中途再次读取可变的 `activeModelId`。
+- 流式生成期间只维护前端临时 Assistant Message；服务端必须等 `RUN_END` 后再原子提交 User Message、Assistant Message 与 Manifest，`RUN_ERROR` 时三者都不写入。
+- 模型执行只读取现有 Provider Catalog/API Key；不要再引入第二套 LibreChat URL/Token 配置覆盖当前模型选择。
+- `@librechat/agents@3.2.46` 要求 Node.js 24，当前 Node.js 22 环境不要强行安装；升级运行环境并评估其 LangChain/tool 依赖后再接入完整 Agent/MCP。
 - Message 必须带 `nodeId`；Provider 历史只读取活动节点，避免支线探索污染主线对话。
 - 正式支线创建应原子写入 Node 与 `derived-from` Edge，并保存 `sourceMessageId`/`anchorText`；合并不复制完整历史，只写摘要引用和 `merged-into` Edge。
 - Graph 交互使用世界坐标与视口变换：Pointer Events 统一节点/画布鼠标与触控，节点拖动期间本地更新坐标，Pointer Up 后调用位置 API，失败时由 App 回滚；缩放围绕指针位置修正平移，避免画布跳动。
@@ -31,6 +40,7 @@
 
 - 测试推荐上下文时，应通过按钮的可访问名称定位，避免依赖装饰性 DOM。
 - Provider 测试注入 mock `fetch`，验证 Authorization、模型、Active Context Prompt 和响应解析，不进行真实付费调用。
+- 流式测试同时覆盖 SSE 多片段拼接、最终 Commit 事件和中途 `RUN_ERROR` 不落盘，避免只验证完整 JSON 回退路径。
 - API 集成测试使用临时目录，验证磁盘持久化并在测试结束后清理。
 - 安全测试必须证明 Provider JSON 和 HTTP 响应都不含测试用明文 Key。
 - 支线集成测试要覆盖创建、坐标持久化、合并状态、活动节点回切和语义边写入。
@@ -68,3 +78,12 @@
 - 不要在 Provider 失败时写入伪造 Assistant Message；应把明确错误返回用户并允许重试。
 - 不要在组件内硬编码新主题色；先扩展语义设计令牌。
 - 不要用高强度大圆角、紫色渐变和大面积发光替代清晰的信息层级。
+- 不要因为当前仓库存在 OpenAI-compatible Provider 就宣称已经完成 LibreChat Runtime 迁移；必须以锁定 upstream commit、许可证清理、接口适配和回归测试为准。
+- 不要让 Runtime 负责 Rhiza Message、Node、Edge 或 Manifest 持久化；Runtime 只发事件，Product API 决定何时原子提交领域状态。
+- 不要复制 LibreChat 的 MIME 列表、Model Spec schema 或 endpoint 常量；统一从锁定版本的 `librechat-data-provider` 读取。
+
+## 8. Git/网络注意事项
+
+- 本机 Clash 当前 HTTP 代理端口为 `127.0.0.1:9095`；Git 全局 `http.proxy` 与 `https.proxy` 必须和该端口一致，否则 Smart HTTP 会继续尝试失效的旧端口。
+- GitHub 连通性应使用 `git ls-remote` 验证，而不是只看浏览器或 `curl`；该命令能覆盖 Git 实际使用的 Smart HTTP 路径。
+- 当前仓库的 `upstream` 指向 LibreChat 官方仓库，用于锁定 Runtime 参考版本；Rhiza 自有 `origin` 需要明确的仓库地址后再配置，不能用 upstream 代替。

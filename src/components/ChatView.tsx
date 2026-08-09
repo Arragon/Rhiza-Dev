@@ -34,6 +34,7 @@ export function ChatView({ activeNode, nodes, mode, activeCount, messages, provi
   const tempEndRef = useRef<HTMLDivElement>(null);
   const path = useMemo(() => nodePath(activeNode, nodes), [activeNode, nodes]);
   const compactPath = path.length <= 3 ? path : [path[0], null, ...path.slice(-2)];
+  const hasStreamingAnswer = messages.some(message => message.kind === 'assistant' && message.pending && message.text);
 
   useEffect(() => { if (typeof endRef.current?.scrollIntoView === 'function') endRef.current.scrollIntoView({ behavior: 'smooth' }); }, [messages, thinking]);
   useEffect(() => { if (typeof tempEndRef.current?.scrollIntoView === 'function') tempEndRef.current.scrollIntoView({ behavior: 'smooth' }); }, [temporary?.messages, tempThinking]);
@@ -90,14 +91,14 @@ export function ChatView({ activeNode, nodes, mode, activeCount, messages, provi
             <article className="message user-message" key={message.id}><div className="message-meta"><span>YOU</span><time>第 {Math.floor(index / 2) + 1} 轮</time></div><MarkdownContent content={message.text}/></article>
           ) : (
             <article className="message assistant-message selectable-answer" key={message.id} onMouseUp={event => captureSelection(event, message)}>
-              <div className="assistant-head"><ParticleMark compact/><span>RABBIT</span><small>基于 {activeCount} 项上下文</small></div>
+              <div className="assistant-head"><ParticleMark compact/><span>RHIZA</span><small>基于 {activeCount} 项 Active Context</small></div>
               <div className="answer-paragraph"><MarkdownContent content={message.text}/><button className="paragraph-branch" aria-label="讨论整个段落" title="将整段放入临时支线" onClick={() => openTemporary(message, message.text)}><TextSelect size={14}/></button></div>
               {activeNode.kind === 'main' && index === 1 && <div className="answer-grid"><section><span className="answer-number">01</span><h3>默认保持单线聚焦</h3><p>中间区域只承载当前讨论。导航、上下文和状态采用可收起的邻接面板，复杂度随意图展开。</p></section><section><span className="answer-number">02</span><h3>让系统状态始终可见</h3><p>用轻量标签持续展示节点生命周期、引用来源与 Context Budget，而不是等用户出错后再解释。</p></section><section><span className="answer-number">03</span><h3>先临时探索，再决定保留</h3><p>划线或选中段落后在当前讨论旁打开临时对话；有价值时才固化为正式节点。</p></section></div>}
               <div className="message-actions"><button onClick={() => openTemporary(message, message.text)}><GitBranch size={14}/>在临时支线中讨论</button><button><Link2 size={14}/>保存为引用</button><button><Check size={14}/>提取为状态</button></div>
               {message.manifestId && <div className="branch-note"><span className="branch-line"/><GitMerge size={14}/><span>Context Manifest · {message.manifestId.slice(0, 8)}</span></div>}
             </article>
           ))}
-          {thinking && <div className="thinking"><ParticleMark compact/><span>正在组织上下文</span><i/><i/><i/></div>}
+          {thinking && !hasStreamingAnswer && <div className="thinking"><ParticleMark compact/><span>正在组织上下文</span><i/><i/><i/></div>}
           <div ref={endRef}/>
         </div>
       </div>
@@ -105,7 +106,7 @@ export function ChatView({ activeNode, nodes, mode, activeCount, messages, provi
       {temporary && <aside className="temporary-branch" aria-label="临时支线">
         <header><div><span className="temp-status"><i/> TEMP · 未保存</span><input aria-label="临时支线标题" value={temporary.title} onChange={event => setTemporary(current => current ? { ...current, title: event.target.value } : current)}/></div><button aria-label="丢弃临时支线" onClick={() => setTemporary(null)}><X size={16}/></button></header>
         <blockquote><span>选中内容</span>{temporary.anchorText}</blockquote>
-        <div className="temp-thread">{temporary.messages.length === 0 && <div className="temp-empty"><GitBranch size={18}/><strong>这是临时探索空间</strong><p>对话只存在于当前页面；点击“保留”后才会进入节点树与关系图谱。</p></div>}{temporary.messages.map(message => <article className={`temp-message ${message.kind}`} key={message.id}><span>{message.kind === 'user' ? 'YOU' : 'RABBIT'}</span><MarkdownContent content={message.text}/></article>)}{tempThinking && <div className="thinking"><ParticleMark compact/><span>沿锚点继续思考</span><i/><i/><i/></div>}<div ref={tempEndRef}/></div>
+        <div className="temp-thread">{temporary.messages.length === 0 && <div className="temp-empty"><GitBranch size={18}/><strong>这是临时探索空间</strong><p>对话只存在于当前页面；点击“保留”后才会进入节点树与对话图谱。</p></div>}{temporary.messages.map(message => <article className={`temp-message ${message.kind}`} key={message.id}><span>{message.kind === 'user' ? 'YOU' : 'RHIZA'}</span><MarkdownContent content={message.text}/></article>)}{tempThinking && <div className="thinking"><ParticleMark compact/><span>沿锚点继续思考</span><i/><i/><i/></div>}<div ref={tempEndRef}/></div>
         {tempError && <div className="temp-error" role="alert">{tempError}</div>}
         <div className="temp-composer"><textarea aria-label="临时支线消息" rows={2} value={tempDraft} onChange={event => setTempDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); sendTemp(); } }} placeholder="围绕选中内容追问…"/><button aria-label="发送临时消息" onClick={sendTemp} disabled={!tempDraft.trim() || tempThinking || !provider.configured}><Send size={15}/></button></div>
         <footer><button className="discard-temp" onClick={() => setTemporary(null)}><Trash2 size={14}/>丢弃</button><button className="keep-temp" onClick={preserveTemporary} disabled={!temporary.title.trim() || preserving}><BookmarkPlus size={14}/>{preserving ? '保留中…' : '保留为讨论流'}</button></footer>
@@ -113,7 +114,7 @@ export function ChatView({ activeNode, nodes, mode, activeCount, messages, provi
       <div className="composer-wrap">
         {(chatError || syncError) && <div className="composer-error" role="alert">{chatError || syncError}</div>}
         <div className="composer"><textarea aria-label="输入消息" value={draft} onChange={event => setDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey) { event.preventDefault(); send(); } }} placeholder="继续这段讨论…" rows={2}/><div className="composer-tools"><div><button aria-label="添加附件"><Paperclip size={16}/></button><button aria-label="引用节点"><AtSign size={16}/></button><button aria-label="添加文件"><FilePlus2 size={16}/></button></div><div className="send-side"><ModelSelector catalog={providerCatalog} onSelect={onSelectModel} onSettings={onSettings}/><span className={provider.configured ? 'provider-online' : 'provider-offline'}><Sparkles size={13}/>{provider.configured ? 'Ready' : '未连接'} · {mode} · {activeCount} sources</span><button className="send-button" onClick={send} disabled={!draft.trim() || thinking || !provider.configured} aria-label="发送"><ArrowUp size={17}/></button></div></div></div>
-        <p className="composer-caption"><span className="live-dot"/> 本轮调用将生成可审计的 Context Manifest</p>
+        <p className="composer-caption"><span className="live-dot"/> Rhiza Domain 将冻结上下文，再交由 AI Runtime 执行</p>
       </div>
     </main>
   );

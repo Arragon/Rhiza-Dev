@@ -3,18 +3,81 @@ import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { ProviderError } from './ai-provider';
-import type { ContextMode, ContextStatus } from './domain';
+import { collectRuntimeResult, RuntimeExecutionError, type AIRuntime, type ModelInfo, type RuntimeRequest, type RuntimeResult } from './ai-runtime';
+import type { ContextManifest, ContextMode, ContextStatus, StoredMessage } from './domain';
 import { providerPresets, type ProviderService } from './provider-service';
+import { ProviderRuntime } from './provider-runtime';
 import type { WorkspaceStore } from './store';
 
 const contextStatuses = new Set<ContextStatus>(['active', 'recommended', 'excluded']);
 const contextModes = new Set<ContextMode>(['Auto', 'Assisted', 'Strict']);
 const edgeRelations = new Set(['derived-from', 'references', 'merged-into']);
 
-export function createApp(store: WorkspaceStore, provider: ProviderService, serveFrontend = false) {
+export function createApp(store: WorkspaceStore, provider: ProviderService, serveFrontend = false, runtime: AIRuntime = new ProviderRuntime(provider)) {
   const app = express();
   app.disable('x-powered-by');
   app.use(express.json({ limit: '256kb' }));
+
+  const activeRuntimeModel = async (): Promise<ModelInfo> => {
+    const model = (await runtime.listModels()).find(item => item.active);
+    if (!model) throw new ProviderError('请先在模型设置中选择一个模型。', 503, 'MODEL_NOT_SELECTED');
+    return model;
+  };
+
+  const activeRuntimeStatus = async () => {
+    if (runtime.kind !== 'librechat') return provider.activeStatus();
+    const model = await activeRuntimeModel();
+    return { configured: true, name: model.provider, model: model.displayName, baseUrl: '' };
+  };
+
+  const prepareChatRun = async (prompt: string): Promise<{ manifest: ContextManifest; request: RuntimeRequest; createdAt: string }> => {
+    const current = await store.read();
+    const activeContext = current.contextItems.filter(item => item.status === 'active');
+    const activeNodeId = current.activeNodeId;
+    if (!current.discussionNodes.some(node => node.id === activeNodeId)) throw new ProviderError('当前讨论节点不存在。', 404, 'NODE_NOT_FOUND');
+    const createdAt = new Date().toISOString();
+    const manifestId = randomUUID();
+    const requestId = randomUUID();
+    const model = await activeRuntimeModel();
+    const manifest: ContextManifest = {
+      id: manifestId,
+      projectId: current.projectId,
+      nodeId: activeNodeId,
+      requestId,
+      createdAt,
+      mode: current.mode,
+      model: model.model,
+      provider: model.provider,
+      runtime: runtime.kind || 'provider-adapter',
+      contextItemIds: activeContext.map(item => item.id),
+      excludedItemIds: current.contextItems.filter(item => item.status === 'excluded').map(item => item.id),
+      contextItems: activeContext.map(item => ({ sourceType: 'context-item', sourceId: item.id, role: item.role, selectionMode: item.selectionMode || 'CURRENT', tokenCount: item.tokens, contentVersion: 1 })),
+      estimatedTokens: activeContext.reduce((sum, item) => sum + item.tokens, 0),
+    };
+    return {
+      manifest,
+      createdAt,
+      request: {
+        requestId, manifestId, projectId: current.projectId, nodeId: activeNodeId, modelId: model.id,
+        prompt, history: current.messages.filter(message => message.nodeId === activeNodeId), contextItems: activeContext, mode: current.mode,
+      },
+    };
+  };
+
+  const commitChatRun = async (run: { manifest: ContextManifest; request: RuntimeRequest; createdAt: string }, completion: RuntimeResult) => {
+    const userMessage: StoredMessage = { id: randomUUID(), nodeId: run.request.nodeId, kind: 'user', text: run.request.prompt, createdAt: run.createdAt };
+    const assistantMessage: StoredMessage = { id: randomUUID(), nodeId: run.request.nodeId, kind: 'assistant', text: completion.text, createdAt: run.createdAt, manifestId: run.manifest.id };
+    await store.update(latest => {
+      if (latest.manifests.some(manifest => manifest.requestId === run.request.requestId)) return latest;
+      if (!latest.discussionNodes.some(node => node.id === run.request.nodeId)) throw new ProviderError('生成期间讨论节点已被删除，结果未写入。', 409, 'NODE_REMOVED_DURING_RUN');
+      return { ...latest, messages: [...latest.messages, userMessage, assistantMessage], manifests: [...latest.manifests, run.manifest] };
+    });
+    return { userMessage, assistantMessage, manifest: run.manifest };
+  };
+
+  const writeSse = (response: express.Response, event: string, payload: unknown) => {
+    response.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+  };
 
   app.use((request, response, next) => {
     const requestId = randomUUID();
@@ -27,11 +90,11 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
   });
 
   app.get('/api/health', async (_request, response, next) => {
-    try { response.json({ ok: true, provider: await provider.activeStatus() }); } catch (error) { next(error); }
+    try { response.json({ ok: true, provider: await activeRuntimeStatus(), runtime: runtime.kind || 'provider-adapter' }); } catch (error) { next(error); }
   });
 
   app.get('/api/workspace', async (_request, response, next) => {
-    try { response.json({ workspace: await store.read(), provider: await provider.activeStatus(), providerCatalog: await provider.snapshot() }); } catch (error) { next(error); }
+    try { response.json({ workspace: await store.read(), provider: await activeRuntimeStatus(), providerCatalog: await provider.snapshot() }); } catch (error) { next(error); }
   });
 
   app.get('/api/providers', async (_request, response, next) => {
@@ -55,7 +118,7 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
   });
 
   app.post('/api/models/:id/select', async (request, response, next) => {
-    try { response.json({ catalog: await provider.selectModel(request.params.id), provider: await provider.activeStatus() }); } catch (error) { next(error); }
+    try { response.json({ catalog: await provider.selectModel(request.params.id), provider: await activeRuntimeStatus() }); } catch (error) { next(error); }
   });
 
   app.patch('/api/workspace/mode', async (request, response, next) => {
@@ -77,7 +140,7 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
         contextItems: current.contextItems.map(item => {
           if (item.id !== request.params.id) return item;
           found = true;
-          return { ...item, status };
+          return { ...item, status, ...(item.status === 'recommended' && status === 'active' ? { selectionMode: 'AI_RECOMMENDED_ACCEPTED' as const } : {}) };
         }),
       }));
       if (!found) return response.status(404).json({ error: { code: 'CONTEXT_NOT_FOUND', message: 'Context 条目不存在。' } });
@@ -139,7 +202,13 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
       const sourceHistory = current.messages.filter(message => message.nodeId === sourceNodeId).slice(-8);
       const temporaryNodeId = `temp:${sourceNodeId}`;
       const history = [...sourceHistory, ...draftHistory.map(message => ({ id: randomUUID(), nodeId: temporaryNodeId, kind: message.kind as 'user' | 'assistant', text: message.text, createdAt: new Date().toISOString() }))];
-      const completion = await provider.completeActive({ prompt: `围绕下列选中内容回答临时支线问题。不要偏离锚点：\n\n「${anchorText}」\n\n问题：${prompt}`, history, contextItems: activeContext, mode: current.mode });
+      const model = await activeRuntimeModel();
+      const completion = await collectRuntimeResult(runtime, {
+        requestId: randomUUID(), manifestId: `temporary:${randomUUID()}`, projectId: current.projectId,
+        nodeId: temporaryNodeId, modelId: model.id,
+        prompt: `围绕下列选中内容回答临时支线问题。不要偏离锚点：\n\n「${anchorText}」\n\n问题：${prompt}`,
+        history, contextItems: activeContext, mode: current.mode,
+      });
       const createdAt = new Date().toISOString();
       response.status(201).json({
         userMessage: { id: randomUUID(), nodeId: temporaryNodeId, kind: 'user', text: prompt, createdAt },
@@ -251,28 +320,47 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
     } catch (error) { next(error); }
   });
 
+  app.post('/api/chat/stream', async (request, response, next) => {
+    try {
+      const prompt = typeof request.body?.message === 'string' ? request.body.message.trim() : '';
+      if (!prompt || prompt.length > 20_000) return response.status(400).json({ error: { code: 'INVALID_MESSAGE', message: '消息不能为空且不能超过 20,000 字符。' } });
+      const run = await prepareChatRun(prompt);
+      response.status(200);
+      response.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
+      response.setHeader('Cache-Control', 'no-cache, no-transform');
+      response.setHeader('Connection', 'keep-alive');
+      response.setHeader('X-Accel-Buffering', 'no');
+      response.flushHeaders();
+
+      for await (const event of runtime.generate(run.request)) {
+        writeSse(response, 'runtime', event);
+        if (event.type === 'RUN_ERROR') { response.end(); return; }
+        if (event.type === 'RUN_END') {
+          const committed = await commitChatRun(run, { text: event.text, model: event.model, provider: event.provider });
+          writeSse(response, 'commit', { type: 'COMMIT', ...committed });
+          response.end();
+          return;
+        }
+      }
+      writeSse(response, 'runtime', { type: 'RUN_ERROR', requestId: run.request.requestId, code: 'INCOMPLETE_RUNTIME_STREAM', message: 'AI Runtime 未返回结束事件。', status: 502 });
+      response.end();
+    } catch (error) {
+      if (!response.headersSent) return next(error);
+      const runtimeError = error instanceof ProviderError || error instanceof RuntimeExecutionError
+        ? error
+        : new RuntimeExecutionError(error instanceof Error ? error.message : 'AI Runtime 流式执行失败。');
+      writeSse(response, 'runtime', { type: 'RUN_ERROR', requestId: response.getHeader('X-Request-Id'), code: runtimeError.code, message: runtimeError.message, status: runtimeError.status });
+      response.end();
+    }
+  });
+
   app.post('/api/chat', async (request, response, next) => {
     try {
       const prompt = typeof request.body?.message === 'string' ? request.body.message.trim() : '';
       if (!prompt || prompt.length > 20_000) return response.status(400).json({ error: { code: 'INVALID_MESSAGE', message: '消息不能为空且不能超过 20,000 字符。' } });
-      const current = await store.read();
-      const activeContext = current.contextItems.filter(item => item.status === 'active');
-      const activeNodeId = current.activeNodeId;
-      const completion = await provider.completeActive({ prompt, history: current.messages.filter(message => message.nodeId === activeNodeId), contextItems: activeContext, mode: current.mode });
-      const createdAt = new Date().toISOString();
-      const manifestId = randomUUID();
-      const userMessage = { id: randomUUID(), nodeId: activeNodeId, kind: 'user' as const, text: prompt, createdAt };
-      const assistantMessage = { id: randomUUID(), nodeId: activeNodeId, kind: 'assistant' as const, text: completion.text, createdAt, manifestId };
-      const manifest = {
-        id: manifestId,
-        createdAt,
-        mode: current.mode,
-        model: completion.model,
-        contextItemIds: activeContext.map(item => item.id),
-        estimatedTokens: activeContext.reduce((sum, item) => sum + item.tokens, 0),
-      };
-      await store.update(latest => ({ ...latest, messages: [...latest.messages, userMessage, assistantMessage], manifests: [...latest.manifests, manifest] }));
-      response.status(201).json({ userMessage, assistantMessage, manifest });
+      const run = await prepareChatRun(prompt);
+      const completion = await collectRuntimeResult(runtime, run.request);
+      response.status(201).json(await commitChatRun(run, completion));
     } catch (error) { next(error); }
   });
 
@@ -285,7 +373,7 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
   }
 
   app.use((error: unknown, _request: express.Request, response: express.Response, _next: express.NextFunction) => {
-    if (error instanceof ProviderError) return response.status(error.status).json({ error: { code: error.code, message: error.message } });
+    if (error instanceof ProviderError || error instanceof RuntimeExecutionError) return response.status(error.status).json({ error: { code: error.code, message: error.message } });
     console.error('[api] unhandled request error', error instanceof Error ? error.message : error);
     response.status(500).json({ error: { code: 'INTERNAL_ERROR', message: '服务器处理请求时发生错误。' } });
   });

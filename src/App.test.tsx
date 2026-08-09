@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   setMode: vi.fn(),
   setContextStatus: vi.fn(),
   sendMessage: vi.fn(),
+  streamMessage: vi.fn(),
   getProviders: vi.fn(),
   saveProvider: vi.fn(),
   discoverModels: vi.fn(),
@@ -19,7 +20,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('./api', () => ({ api: mocks }));
 
 const workspace = {
-  projectId: 'rabbit-research', nodeId: 'information-architecture', mode: 'Assisted' as const,
+  projectId: 'rhiza-product-research', nodeId: 'information-architecture', mode: 'Assisted' as const,
   contextItems: initialContext,
   messages: [
     { id: 'm1', nodeId: 'information-architecture', kind: 'user' as const, text: '原始问题', createdAt: '2026-08-09T12:00:00.000Z' },
@@ -55,13 +56,26 @@ beforeEach(() => {
     assistantMessage: { id: 'm4', nodeId: 'information-architecture', kind: 'assistant', text: '真实 Provider 回答', createdAt: '2026-08-09T12:01:01.000Z', manifestId: 'manifest-1' },
     manifest: { id: 'manifest-1' },
   });
+  mocks.streamMessage.mockImplementation(async (_message: string, onEvent: (event: unknown) => void) => {
+    onEvent({ type: 'CONTENT_DELTA', requestId: 'request-1', delta: '真实 Provider ' });
+    onEvent({ type: 'CONTENT_DELTA', requestId: 'request-1', delta: '回答' });
+    return {
+      userMessage: { id: 'm3', nodeId: 'information-architecture', kind: 'user', text: '验证这个结构', createdAt: '2026-08-09T12:01:00.000Z' },
+      assistantMessage: { id: 'm4', nodeId: 'information-architecture', kind: 'assistant', text: '真实 Provider 回答', createdAt: '2026-08-09T12:01:01.000Z', manifestId: 'manifest-1' },
+      manifest: { id: 'manifest-1' },
+    };
+  });
 });
 
-describe('RabbitHole MVP', () => {
+describe('Rhiza MVP', () => {
   it('opens with the focused discussion experience', () => {
     render(<App />);
     expect(screen.getByRole('heading', { level: 1, name: /信息架构方向/ })).toBeInTheDocument();
     expect(screen.getByText('本轮上下文')).toBeInTheDocument();
+    expect(screen.getByText('根系')).toBeInTheDocument();
+    expect(screen.getByText('Rhiza')).toBeInTheDocument();
+    expect(screen.getByText('Recommended · 待确认')).toBeInTheDocument();
+    expect(screen.getByText('推荐项不会自动进入模型输入。')).toBeInTheDocument();
   });
 
   it('moves recommended context into active context', async () => {
@@ -74,9 +88,9 @@ describe('RabbitHole MVP', () => {
 
   it('navigates between graph and project state views', () => {
     render(<App />);
-    fireEvent.click(screen.getByRole('button', { name: /关系图谱/ }));
-    expect(screen.getByRole('heading', { name: '项目关系图谱' })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: /项目状态/ }));
+    fireEvent.click(screen.getByRole('button', { name: /对话图谱/ }));
+    expect(screen.getByRole('heading', { name: '对话图谱' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /知识状态/ }));
     expect(screen.getByRole('heading', { name: '当前有效知识' })).toBeInTheDocument();
   });
 
@@ -87,8 +101,8 @@ describe('RabbitHole MVP', () => {
     fireEvent.change(input, { target: { value: '验证这个结构' } });
     fireEvent.click(screen.getByRole('button', { name: '发送' }));
     expect(screen.getByText('验证这个结构')).toBeInTheDocument();
-    expect(await screen.findByText('真实 Provider 回答')).toBeInTheDocument();
-    expect(mocks.sendMessage).toHaveBeenCalledWith('验证这个结构');
+    await waitFor(() => expect(screen.getByText('真实 Provider 回答')).toBeInTheDocument());
+    expect(mocks.streamMessage).toHaveBeenCalledWith('验证这个结构', expect.any(Function));
   });
 
   it('opens provider settings and favorites a model', async () => {

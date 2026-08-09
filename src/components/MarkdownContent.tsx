@@ -17,7 +17,7 @@ function MermaidBlock({ chart }: { chart: string }) {
     setSvg('');
     import('mermaid').then(({ default: mermaid }) => {
       mermaid.initialize({ startOnLoad: false, securityLevel: 'strict', theme: 'base', themeVariables: { primaryColor: '#e4f0eb', primaryTextColor: '#20231f', primaryBorderColor: '#2d7567', lineColor: '#6c8176', secondaryColor: '#f5f6f1', tertiaryColor: '#ffffff', fontFamily: 'Manrope, Microsoft YaHei, sans-serif' } });
-      return mermaid.render(`rabbit-mermaid-${id}`, chart);
+      return mermaid.render(`rhiza-mermaid-${id}`, chart);
     }).then(result => {
       if (!disposed) setSvg(result.svg);
     }).catch(renderError => {

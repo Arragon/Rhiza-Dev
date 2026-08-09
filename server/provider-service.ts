@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { OpenAiCompatibleProvider, ProviderError } from './ai-provider';
 import type { AiConfig } from './config';
 import type { ContextItem, StoredMessage } from './domain';
+import { libreChatEndpointForPreset, libreChatFilePolicy, toLibreChatModelSpec } from './librechat-shared';
 import type { ModelRecord, ProviderPreset, ProviderSnapshot, StoredProvider } from './provider-domain';
 import type { ProviderStore } from './provider-store';
 import type { SecretVault } from './secret-vault';
@@ -23,10 +24,19 @@ export class ProviderService {
 
   async snapshot(): Promise<ProviderSnapshot> {
     const data = await this.ensureSeed();
+    const providers = data.providers.map(({ apiKey, ...provider }) => ({ ...provider, hasApiKey: Boolean(apiKey), configured: Boolean(apiKey) || provider.allowNoKey }));
+    const models = [...data.models].sort((a, b) => Number(b.pinned) - Number(a.pinned) || Number(b.favorite) - Number(a.favorite) || a.displayName.localeCompare(b.displayName));
+    const activeModel = models.find(model => model.id === data.activeModelId);
+    const activeProvider = data.providers.find(provider => provider.id === activeModel?.providerId);
     return {
-      providers: data.providers.map(({ apiKey, ...provider }) => ({ ...provider, hasApiKey: Boolean(apiKey), configured: Boolean(apiKey) || provider.allowNoKey })),
-      models: [...data.models].sort((a, b) => Number(b.pinned) - Number(a.pinned) || Number(b.favorite) - Number(a.favorite) || a.displayName.localeCompare(b.displayName)),
+      providers,
+      models,
       activeModelId: data.activeModelId,
+      modelSpecs: models.flatMap(model => {
+        const provider = data.providers.find(item => item.id === model.providerId);
+        return provider ? [toLibreChatModelSpec(provider, model)] : [];
+      }),
+      filePolicy: libreChatFilePolicy(activeProvider ? libreChatEndpointForPreset(activeProvider.preset) : undefined),
     };
   }
 
@@ -103,11 +113,26 @@ export class ProviderService {
 
   async completeActive(request: CompletionRequest) {
     const data = await this.ensureSeed();
-    const model = data.models.find(item => item.id === data.activeModelId);
+    if (!data.activeModelId) throw new ProviderError('请先在模型设置中选择一个模型。', 503, 'MODEL_NOT_SELECTED');
+    return this.completeModel(data.activeModelId, request);
+  }
+
+  async completeModel(modelRecordId: string, request: CompletionRequest) {
+    const data = await this.ensureSeed();
+    const model = data.models.find(item => item.id === modelRecordId);
     const provider = data.providers.find(item => item.id === model?.providerId);
     if (!model || !provider) throw new ProviderError('请先在模型设置中选择一个模型。', 503, 'MODEL_NOT_SELECTED');
     const ai = new OpenAiCompatibleProvider({ ...this.envConfig, baseUrl: provider.baseUrl, chatPath: provider.chatPath, providerName: provider.name, model: model.modelId, apiKey: await this.vault.decrypt(provider.apiKey), allowNoKey: provider.allowNoKey }, this.fetcher);
     return { text: await ai.complete(request), model: model.modelId, provider: provider.name };
+  }
+
+  async streamModel(modelRecordId: string, request: CompletionRequest) {
+    const data = await this.ensureSeed();
+    const model = data.models.find(item => item.id === modelRecordId);
+    const provider = data.providers.find(item => item.id === model?.providerId);
+    if (!model || !provider) throw new ProviderError('请先在模型设置中选择一个模型。', 503, 'MODEL_NOT_SELECTED');
+    const ai = new OpenAiCompatibleProvider({ ...this.envConfig, baseUrl: provider.baseUrl, chatPath: provider.chatPath, providerName: provider.name, model: model.modelId, apiKey: await this.vault.decrypt(provider.apiKey), allowNoKey: provider.allowNoKey }, this.fetcher);
+    return { stream: ai.stream(request), model: model.modelId, provider: provider.name };
   }
 
   private async ensureSeed() {

@@ -163,7 +163,7 @@ export function GraphView({ nodes, edges, activeNodeId, onMove, onActivate, onCr
   const selectedEdge = edges.find(edge => edge.id === selectedEdgeId);
   const selectedNodeChildren = deleteTarget ? nodes.filter(node => node.sourceNodeId === deleteTarget.id) : [];
   return <main className="workspace graph-view">
-    <header className="workspace-header graph-header"><div><span className="eyebrow">CONVERSATION GRAPH</span><h1>项目关系图谱</h1><p>{nodes.length} 个讨论节点 · {edges.length} 条语义关系 · 滚轮缩放，空白处拖拽画布</p></div><div className="graph-status-key"><span><i className="legend-current"/>当前讨论</span><span><i className="legend-active"/>进行中</span><span><i className="legend-resolved"/>已合并</span></div></header>
+    <header className="workspace-header graph-header"><div><span className="eyebrow">CONVERSATION GRAPH</span><h1>对话图谱</h1><p>{nodes.length} 个讨论节点 · {edges.length} 条语义关系 · 滚轮缩放，空白处拖拽画布</p></div><div className="graph-status-key"><span><i className="legend-current"/>当前讨论</span><span><i className="legend-active"/>进行中</span><span><i className="legend-resolved"/>已合并</span></div></header>
     <section className="graph-canvas" aria-label="讨论关系图" ref={canvasRef} onWheel={handleWheel} onPointerDown={pointerDownCanvas} onPointerMove={pointerMoveCanvas} onPointerUp={pointerUpCanvas}>
       <div className="graph-search" data-no-pan="true"><Search size={15}/><input aria-label="搜索图谱" placeholder="在图谱中搜索" value={query} onChange={event => setQuery(event.target.value)} onPointerDown={event => event.stopPropagation()}/></div>
       <div className="graph-toolbar" data-no-pan="true">

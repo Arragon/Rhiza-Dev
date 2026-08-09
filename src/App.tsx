@@ -97,14 +97,21 @@ export function App() {
 
   const sendMessage = async (text: string) => {
     const pendingId = `pending-${Date.now()}`;
+    const pendingAssistantId = `${pendingId}-assistant`;
     const pending: Message = { id: pendingId, nodeId: activeNodeId, kind: 'user', text, createdAt: new Date().toISOString(), pending: true };
+    const pendingAssistant: Message = { id: pendingAssistantId, nodeId: activeNodeId, kind: 'assistant', text: '', createdAt: new Date().toISOString(), pending: true };
     setMessages(current => [...current, pending]);
     try {
-      const result = await api.sendMessage(text);
-      setMessages(current => [...current.filter(message => message.id !== pendingId), result.userMessage, result.assistantMessage]);
+      const result = await api.streamMessage(text, event => {
+        if (event.type !== 'CONTENT_DELTA') return;
+        setMessages(current => current.some(message => message.id === pendingAssistantId)
+          ? current.map(message => message.id === pendingAssistantId ? { ...message, text: message.text + event.delta } : message)
+          : [...current, { ...pendingAssistant, text: event.delta }]);
+      });
+      setMessages(current => [...current.filter(message => message.id !== pendingId && message.id !== pendingAssistantId), result.userMessage, result.assistantMessage]);
       setSyncError('');
     } catch (error) {
-      setMessages(current => current.map(message => message.id === pendingId ? { ...message, pending: false } : message));
+      setMessages(current => current.filter(message => message.id !== pendingAssistantId).map(message => message.id === pendingId ? { ...message, pending: false } : message));
       throw error;
     }
   };

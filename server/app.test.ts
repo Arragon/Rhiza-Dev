@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import request from 'supertest';
 import { createApp } from './app';
+import type { AIRuntime } from './ai-runtime';
 import { ProviderService } from './provider-service';
 import { ProviderStore } from './provider-store';
 import { SecretVault } from './secret-vault';
@@ -13,21 +14,22 @@ import { WorkspaceStore } from './store';
 const temporaryDirectories: string[] = [];
 afterEach(async () => Promise.all(temporaryDirectories.splice(0).map(directory => rm(directory, { recursive: true, force: true }))));
 
-async function testApp() {
-  const directory = await mkdtemp(join(tmpdir(), 'rabbithole-'));
+async function testApp(runtime?: AIRuntime) {
+  const directory = await mkdtemp(join(tmpdir(), 'rhiza-'));
   temporaryDirectories.push(directory);
   const store = new WorkspaceStore(join(directory, 'workspace.json'));
-  const fetcher = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: '后端生成的回答' } }] }), { status: 200 })) as unknown as typeof fetch;
+  const fetcher = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => new Response(JSON.stringify({ choices: [{ message: { content: '后端生成的回答' } }] }), { status: 200 })) as unknown as typeof fetch;
   const provider = new ProviderService(new ProviderStore(join(directory, 'providers.json')), new SecretVault(join(directory, '.provider-key')), { baseUrl: 'https://example.test/v1', apiKey: 'test-key', model: 'test-model', providerName: 'Test', chatPath: '/chat/completions', timeoutMs: 1000, temperature: 0.4, extraHeaders: {}, allowNoKey: false }, fetcher);
-  return { app: createApp(store, provider), filePath: join(directory, 'workspace.json'), providerPath: join(directory, 'providers.json') };
+  return { app: createApp(store, provider, false, runtime), filePath: join(directory, 'workspace.json'), providerPath: join(directory, 'providers.json'), fetcher: fetcher as unknown as ReturnType<typeof vi.fn> };
 }
 
-describe('RabbitHole API', () => {
+describe('Rhiza API', () => {
   it('persists context status updates', async () => {
     const { app, filePath } = await testApp();
     await request(app).patch('/api/workspace/context/c3').send({ status: 'active' }).expect(200);
     const persisted = JSON.parse(await readFile(filePath, 'utf8'));
     expect(persisted.contextItems.find((item: { id: string }) => item.id === 'c3').status).toBe('active');
+    expect(persisted.contextItems.find((item: { id: string }) => item.id === 'c3').selectionMode).toBe('AI_RECOMMENDED_ACCEPTED');
   });
 
   it('calls the provider and stores messages with a manifest', async () => {
@@ -35,9 +37,53 @@ describe('RabbitHole API', () => {
     const response = await request(app).post('/api/chat').send({ message: '生成可执行建议' }).expect(201);
     expect(response.body.assistantMessage.text).toBe('后端生成的回答');
     expect(response.body.manifest.contextItemIds).toEqual(['c1', 'c2']);
+    expect(response.body.manifest).toMatchObject({
+      projectId: 'rhiza-product-research', nodeId: 'information-architecture',
+      provider: 'Test', model: 'test-model', runtime: 'provider-adapter', excludedItemIds: ['c4'],
+    });
+    expect(response.body.manifest.requestId).toEqual(expect.any(String));
+    expect(response.body.manifest.contextItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({ sourceId: 'c1', sourceType: 'context-item', selectionMode: 'CURRENT', contentVersion: 1 }),
+      expect.objectContaining({ sourceId: 'c2', selectionMode: 'USER_SELECTED' }),
+    ]));
     const workspace = await request(app).get('/api/workspace').expect(200);
     expect(workspace.body.workspace.messages).toHaveLength(4);
     expect(workspace.body.workspace.manifests).toHaveLength(1);
+  });
+
+  it('streams runtime events before atomically committing the discussion turn', async () => {
+    const { app } = await testApp();
+    const response = await request(app).post('/api/chat/stream').send({ message: '用事件流回答' }).expect(200).expect('Content-Type', /text\/event-stream/);
+    expect(response.text).toContain('event: runtime');
+    expect(response.text).toContain('"type":"RUN_START"');
+    expect(response.text).toContain('"type":"CONTENT_DELTA"');
+    expect(response.text).toContain('"type":"RUN_END"');
+    expect(response.text).toContain('event: commit');
+    expect(response.text).toContain('"type":"COMMIT"');
+    const workspace = await request(app).get('/api/workspace').expect(200);
+    expect(workspace.body.workspace.messages.slice(-2).map((message: { text: string }) => message.text)).toEqual(['用事件流回答', '后端生成的回答']);
+    expect(workspace.body.workspace.manifests).toHaveLength(1);
+  });
+
+  it('does not persist a partial assistant response when a runtime stream fails', async () => {
+    const failingRuntime: AIRuntime = {
+      kind: 'librechat',
+      listModels: async () => [{ id: 'model-1', provider: 'LibreChat', model: 'test-model', displayName: 'Test', active: true }],
+      async *generate(input) {
+        yield { type: 'RUN_START', requestId: input.requestId, manifestId: input.manifestId, model: 'test-model', provider: 'LibreChat' };
+        yield { type: 'CONTENT_DELTA', requestId: input.requestId, delta: '未完成内容' };
+        yield { type: 'RUN_ERROR', requestId: input.requestId, code: 'UPSTREAM_STREAM_FAILED', message: '上游流中断', status: 502 };
+      },
+    };
+    const { app } = await testApp(failingRuntime);
+    const before = await request(app).get('/api/workspace').expect(200);
+    expect(before.body.provider).toMatchObject({ configured: true, name: 'LibreChat', model: 'Test' });
+    const response = await request(app).post('/api/chat/stream').send({ message: '这条消息不应落盘' }).expect(200);
+    expect(response.text).toContain('"type":"RUN_ERROR"');
+    expect(response.text).not.toContain('event: commit');
+    const after = await request(app).get('/api/workspace').expect(200);
+    expect(after.body.workspace.messages).toEqual(before.body.workspace.messages);
+    expect(after.body.workspace.manifests).toEqual([]);
   });
 
   it('validates client input', async () => {
@@ -52,6 +98,11 @@ describe('RabbitHole API', () => {
     expect(JSON.stringify(response.body)).not.toContain('secret-plain-key');
     expect(await readFile(providerPath, 'utf8')).not.toContain('secret-plain-key');
     expect(response.body.catalog.providers.some((provider: { name: string; hasApiKey: boolean }) => provider.name === 'DeepSeek' && provider.hasApiKey)).toBe(true);
+    expect(response.body.catalog.modelSpecs).toEqual(expect.arrayContaining([
+      expect.objectContaining({ label: 'deepseek-chat', group: 'DeepSeek', preset: expect.objectContaining({ endpoint: 'custom', model: 'deepseek-chat' }) }),
+    ]));
+    expect(response.body.catalog.filePolicy).toMatchObject({ disabled: false, maxFiles: 10 });
+    expect(response.body.catalog.filePolicy.supportedMimeTypes).toContain('application/pdf');
   });
 
   it('persists model selection, favorite and pin state', async () => {
@@ -78,6 +129,21 @@ describe('RabbitHole API', () => {
     expect(merged.body.workspace.discussionNodes.find((node: { id: string }) => node.id === branch.id)).toMatchObject({ x: 612, y: 286, status: 'resolved' });
     expect(merged.body.workspace.discussionEdges.some((edge: { relation: string }) => edge.relation === 'merged-into')).toBe(true);
     expect(JSON.parse(await readFile(filePath, 'utf8')).discussionNodes).toHaveLength(2);
+  });
+
+  it('keeps runtime history and persisted messages scoped to the active graph node', async () => {
+    const { app, fetcher } = await testApp();
+    const created = await request(app).post('/api/nodes').send({ title: '隔离支线', anchorText: '只研究这条路径' }).expect(201);
+    const branchId = created.body.workspace.activeNodeId;
+
+    const response = await request(app).post('/api/chat').send({ message: '支线中的第一个问题' }).expect(201);
+    expect(response.body.userMessage.nodeId).toBe(branchId);
+    expect(response.body.assistantMessage.nodeId).toBe(branchId);
+    expect(response.body.manifest.nodeId).toBe(branchId);
+
+    const providerBody = JSON.parse(String(fetcher.mock.calls.at(-1)?.[1]?.body));
+    expect(providerBody.messages.map((message: { content: string }) => message.content)).not.toContain(expect.stringContaining('结合前两轮访谈'));
+    expect(providerBody.messages.at(-1).content).toBe('支线中的第一个问题');
   });
 
   it('creates and deletes graph nodes and semantic edges', async () => {

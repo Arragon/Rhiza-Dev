@@ -10,6 +10,7 @@ export interface ContextItem {
   status: ContextStatus;
   tokens: number;
   reason?: string;
+  selectionMode?: 'CURRENT' | 'USER_SELECTED' | 'AI_RECOMMENDED_ACCEPTED';
 }
 
 export interface Message {
@@ -74,7 +75,19 @@ export interface ModelRecord {
   id: string; providerId: string; modelId: string; displayName: string;
   favorite: boolean; pinned: boolean; createdAt: string;
 }
-export interface ProviderCatalog { providers: SafeProvider[]; models: ModelRecord[]; activeModelId: string | null }
+export interface ProviderCatalog {
+  providers: SafeProvider[];
+  models: ModelRecord[];
+  activeModelId: string | null;
+  modelSpecs?: Array<{
+    name: string; label: string; group?: string; description?: string;
+    preset: { endpoint?: string | null; endpointType?: string | null; model?: string | null };
+  }>;
+  filePolicy?: {
+    disabled: boolean; maxFiles: number; maxFileSizeBytes: number; maxTotalSizeBytes: number;
+    fileTokenLimit: number; supportedMimeTypes: string[];
+  };
+}
 export interface ProviderPresetInfo { name: string; baseUrl: string; allowNoKey: boolean }
 
 export interface WorkspaceSnapshot {
@@ -86,6 +99,10 @@ export interface WorkspaceSnapshot {
   discussionNodes: DiscussionNode[];
   discussionEdges: DiscussionEdge[];
   activeNodeId: string;
-  manifests: Array<{ id: string; contextItemIds: string[]; model: string; estimatedTokens: number }>;
+  manifests: Array<{
+    id: string; projectId: string; nodeId: string; requestId: string; contextItemIds: string[];
+    excludedItemIds: string[]; model: string; provider: string;
+    runtime: 'provider-adapter' | 'librechat'; estimatedTokens: number;
+  }>;
   updatedAt: string;
 }

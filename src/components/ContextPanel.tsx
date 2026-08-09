@@ -1,13 +1,13 @@
 import { Check, ChevronDown, EyeOff, FileText, LockKeyhole, MoreHorizontal, Plus, Sparkles, X } from 'lucide-react';
 import type { ContextItem, ContextMode, ContextStatus } from '../types';
 
-const sectionTitle: Record<ContextStatus, string> = { active: '有效上下文', recommended: '建议加入', excluded: '已排除' };
+const sectionTitle: Record<ContextStatus, string> = { active: 'Active · 本轮生效', recommended: 'Recommended · 待确认', excluded: 'Excluded · 已排除' };
 
 export function ContextPanel({ items, mode, onMode, onStatus }: { items: ContextItem[]; mode: ContextMode; onMode: (mode: ContextMode) => void | Promise<void>; onStatus: (id: string, status: ContextStatus) => void | Promise<void> }) {
   const activeTokens = items.filter(i => i.status === 'active').reduce((sum, item) => sum + item.tokens, 0);
   return (
     <aside className="context-panel">
-      <header className="panel-header"><div><span className="eyebrow">CONTEXT INSPECTOR</span><h2>本轮上下文</h2></div><button className="icon-button" aria-label="更多上下文操作"><MoreHorizontal size={18}/></button></header>
+      <header className="panel-header"><div><span className="eyebrow">CONTEXT INSPECTOR</span><h2>本轮上下文</h2><p>推荐项不会自动进入模型输入。</p></div><button className="icon-button" aria-label="更多上下文操作"><MoreHorizontal size={18}/></button></header>
       <div className="mode-control" aria-label="上下文模式">
         {(['Auto', 'Assisted', 'Strict'] as ContextMode[]).map(option => <button key={option} className={mode === option ? 'active' : ''} onClick={() => onMode(option)}>{option}</button>)}
       </div>

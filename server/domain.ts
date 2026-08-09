@@ -1,6 +1,7 @@
 export type ContextMode = 'Auto' | 'Assisted' | 'Strict';
 export type ContextStatus = 'active' | 'recommended' | 'excluded';
 export type ContextRole = 'Fact' | 'Constraint' | 'Decision' | 'Reference';
+export type ContextSelectionMode = 'CURRENT' | 'USER_SELECTED' | 'AI_RECOMMENDED_ACCEPTED';
 
 export interface ContextItem {
   id: string;
@@ -10,6 +11,7 @@ export interface ContextItem {
   status: ContextStatus;
   tokens: number;
   reason?: string;
+  selectionMode?: ContextSelectionMode;
 }
 
 export interface StoredMessage {
@@ -50,10 +52,24 @@ export interface DiscussionEdge {
 
 export interface ContextManifest {
   id: string;
+  projectId: string;
+  nodeId: string;
+  requestId: string;
   createdAt: string;
   mode: ContextMode;
   model: string;
+  provider: string;
+  runtime: 'provider-adapter' | 'librechat';
   contextItemIds: string[];
+  excludedItemIds: string[];
+  contextItems: Array<{
+    sourceType: 'context-item';
+    sourceId: string;
+    role: ContextRole;
+    selectionMode: ContextSelectionMode;
+    tokenCount: number;
+    contentVersion: number;
+  }>;
   estimatedTokens: number;
 }
 

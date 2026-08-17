@@ -18,9 +18,21 @@ tracked evidence.  A release owner performs the two-commit evidence flow:
    validates the manifest with JSON Schema, and writes `G0/evidence.json`.
 4. Review and commit `G0/evidence.json` separately.
 
-`environment-profile.json` is a CI profile. Fixture registry provenance is
+`environment-profile.json` is a CI profile. `performance-profile.json` is a
+versioned 300-node workload recipe: it names a registered workspace fixture as
+its base and is checksummed in evidence. The benchmark uses one persistent HTTP
+server and records all 200 samples per metric; failures, HTTP timeouts, and
+connection drops make the run fail rather than stopping at the first error.
+Fixture registry provenance is
 always `synthetic`; the runner rejects secrets, bearer/sk/cloud keys, PEM,
-absolute/file paths, traversal, unregistered fixtures, and oversized content.
+absolute/file paths (including private, tmp, etc, UNC, and home paths),
+traversal, unregistered fixtures, and oversized content.
 Locally generated evidence records the actual Node, OS, CPU, memory, and store
 adapter alongside the declared CI profile. The committed local result remains
 supplemental until the same `verify:g0` command is green in CI.
+
+On ordinary verification, the baseline tag must exist as an annotated tag and
+peel to `b29d94f`. The archived evidence must describe `HEAD^`, recompute every
+fixture, snapshot, and performance-profile checksum, resolve every artifact
+reference, and retain 20 warm-ups, 200 samples, and zero recorded errors. Raw
+latency values are observational and may differ between environments.

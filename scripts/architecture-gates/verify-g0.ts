@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
+import { createServer, type Server } from 'node:http';
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { cpus, platform, release, tmpdir, totalmem } from 'node:os';
 import { join, relative, resolve } from 'node:path';
@@ -13,7 +14,6 @@ import type { DiscussionNode, WorkspaceData } from '../../server/domain';
 import { ProviderService } from '../../server/provider-service';
 import { ProviderStore } from '../../server/provider-store';
 import { SecretVault } from '../../server/secret-vault';
-import { createSeedWorkspace } from '../../server/seed';
 import { WorkspaceStore } from '../../server/store';
 
 const root = resolve(import.meta.dirname, '../..');
@@ -55,6 +55,16 @@ type Metric = {
   p95: number;
   p99: number;
   max: number;
+};
+
+type PerformanceProfile = {
+  profileVersion: '1.0.0';
+  id: string;
+  baseFixtureId: string;
+  nodeCount: 300;
+  node: { idPrefix: string; titleTemplate: string; summary: string; periodicSummary: string; periodicEvery: number; createdAt: string };
+  message: { idPrefix: string; textFrom: 'nodeSummary'; createdAt: string };
+  requests: { contextPrompt: string; streamMessage: string; timeoutMs: number };
 };
 
 const fail = (message: string): never => {
@@ -108,17 +118,24 @@ function assertValid(validator: Ajv2020, schemaId: string, value: unknown): void
 
 function assertFixtureHygiene(content: string, fixturePath: string): void {
   const forbidden = [
-    /"(?:apiKey|token|password|secret|authorization|credential)"\s*:\s*".+"/i,
+    /"(?:api[_-]?key|token|password|secret|authorization|credential)"\s*:\s*".+"/i,
     /(?:Bearer\s+|sk-)[A-Za-z0-9_-]{8,}/i,
     /(?:AKIA|AIza|ghp_|xox[baprs]-)[A-Za-z0-9_-]{8,}/,
     /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
     /file:\/\//i,
     /(?:^|[\\/])\.\.(?:[\\/]|$)/m,
-    /(?:\/Users\/|\/home\/|[A-Z]:\\)/,
+    /(?:\/Users\/|\/home\/|\/private(?:\/|$)|\/tmp(?:\/|$)|\/etc(?:\/|$)|[A-Z]:\\|\\\\[^\\]+\\[^\\]+)/,
+    /(?:^|["'])~\//m,
   ];
   if (forbidden.some(pattern => pattern.test(content))) {
     fail(`${fixturePath} contains a secret, absolute path, file URL, or traversal`);
   }
+}
+
+async function loadRegisteredFixture<T>(registry: FixtureRegistry, id: string): Promise<T> {
+  const entry = registry.fixtures.find(item => item.id === id)
+    ?? fail(`registered fixture not found: ${id}`);
+  return readJson<T>(join(gates, entry.path));
 }
 
 async function verifyFixtures(validator: Ajv2020): Promise<{ registry: FixtureRegistry; digest: string }> {
@@ -174,7 +191,7 @@ async function verifyCharacterizationMap(): Promise<number> {
   const map = await readJson<{ coverage: Array<{ behavior: string; file: string; title: string }> }>(path);
   const required = [
     'chat', 'branch', 'edit/resend', 'regenerate', 'Stop e2e', 'backend retry',
-    'UI retry', 'file', 'archive/restore', 'merge/delete', 'provider selection',
+    'UI retry', 'file', 'archive/restore', 'merge/delete', 'provider selection', 'fixture route/retry',
   ];
   const actual = map.coverage.map(item => item.behavior).sort();
   if (actual.join('|') !== [...required].sort().join('|')) fail('characterization behavior set drift');
@@ -247,20 +264,29 @@ async function measure(
   operation: () => Promise<void>,
   prepare?: () => Promise<void>,
 ): Promise<Metric> {
+  const timeoutMs = 5_000;
+  const execute = async () => new Promise<void>((resolveOperation, rejectOperation) => {
+    const timer = setTimeout(() => rejectOperation(Object.assign(new Error(`${name} timed out`), { code: 'G0_OPERATION_TIMEOUT' })), timeoutMs);
+    operation().then(() => { clearTimeout(timer); resolveOperation(); }, error => { clearTimeout(timer); rejectOperation(error); });
+  });
   for (let index = 0; index < 20; index += 1) {
     await prepare?.();
-    await operation();
+    await execute();
   }
   const samples: number[] = [];
+  let failures = 0;
+  let timeouts = 0;
+  let drops = 0;
   for (let index = 0; index < 200; index += 1) {
-    await prepare?.();
-    const started = process.hrtime.bigint();
     try {
-      await operation();
-    } catch (error) {
-      throw new Error(`${name} sample ${index + 1} failed`, { cause: error });
-    } finally {
+      await prepare?.();
+      const started = process.hrtime.bigint();
+      await execute();
       samples.push(Number(process.hrtime.bigint() - started) / 1e6);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'G0_OPERATION_TIMEOUT') timeouts += 1;
+      else if ((error as NodeJS.ErrnoException).code === 'ECONNRESET') drops += 1;
+      else failures += 1;
     }
   }
   samples.sort((left, right) => left - right);
@@ -270,48 +296,48 @@ async function measure(
     sample_count: 200,
     concurrency: 1,
     external_network: false,
-    failures: 0,
-    timeouts: 0,
-    drops: 0,
-    p50: Number(percentile(samples, 0.5).toFixed(3)),
-    p95: Number(percentile(samples, 0.95).toFixed(3)),
-    p99: Number(percentile(samples, 0.99).toFixed(3)),
-    max: Number(samples.at(-1)!.toFixed(3)),
+    failures, timeouts, drops,
+    p50: Number((samples.length ? percentile(samples, 0.5) : 0).toFixed(3)),
+    p95: Number((samples.length ? percentile(samples, 0.95) : 0).toFixed(3)),
+    p99: Number((samples.length ? percentile(samples, 0.99) : 0).toFixed(3)),
+    max: Number((samples.at(-1) ?? 0).toFixed(3)),
   };
 }
 
-function createBenchmarkWorkspace(): WorkspaceData {
-  const workspace = createSeedWorkspace();
-  workspace.discussionNodes = Array.from({ length: 300 }, (_, index): DiscussionNode => ({
-    id: `g0-node-${index}`,
-    title: `G0 synthetic node ${index}`,
-    summary: index % 13 === 0 ? 'Synthetic transaction idempotency context evidence.' : 'Synthetic graph baseline.',
+function createBenchmarkWorkspace(base: WorkspaceData, profile: PerformanceProfile): WorkspaceData {
+  const workspace = structuredClone(base);
+  workspace.discussionNodes = Array.from({ length: profile.nodeCount }, (_, index): DiscussionNode => ({
+    id: `${profile.node.idPrefix}${index}`,
+    title: profile.node.titleTemplate.replace('{index}', String(index)),
+    summary: index % profile.node.periodicEvery === 0 ? profile.node.periodicSummary : profile.node.summary,
     status: 'active',
     kind: index ? 'branch' : 'main',
     x: index,
     y: index,
-    createdAt: '2026-08-18T00:00:00.000Z',
-    updatedAt: '2026-08-18T00:00:00.000Z',
+    createdAt: profile.node.createdAt,
+    updatedAt: profile.node.createdAt,
   }));
-  workspace.activeNodeId = 'g0-node-0';
-  workspace.nodeId = 'g0-node-0';
+  workspace.activeNodeId = `${profile.node.idPrefix}0`;
+  workspace.nodeId = `${profile.node.idPrefix}0`;
   workspace.messages = workspace.discussionNodes.map((node, index) => ({
-    id: `g0-message-${index}`,
+    id: `${profile.message.idPrefix}${index}`,
     nodeId: node.id,
     kind: 'assistant' as const,
-    text: node.summary,
-    createdAt: '2026-08-18T00:00:00.000Z',
+    text: profile.message.textFrom === 'nodeSummary' ? node.summary : '',
+    createdAt: profile.message.createdAt,
   }));
-  workspace.updatedAt = '2026-08-18T00:00:00.000Z';
+  workspace.updatedAt = profile.node.createdAt;
   return workspace;
 }
 
-async function runBenchmarks(): Promise<Metric[]> {
+async function runBenchmarks(registry: FixtureRegistry, profile: PerformanceProfile): Promise<Metric[]> {
   const directory = await mkdtemp(join(tmpdir(), 'rhiza-g0-'));
   const originalInfo = console.info;
+  let server: Server | undefined;
   console.info = () => undefined;
   try {
-    const workspace = createBenchmarkWorkspace();
+    const fixture = await loadRegisteredFixture<{ workspace: WorkspaceData }>(registry, profile.baseFixtureId);
+    const workspace = createBenchmarkWorkspace(fixture.workspace, profile);
     const store = new WorkspaceStore(join(directory, 'workspace.json'));
     await store.update(() => structuredClone(workspace));
     const reset = async () => { await store.update(() => structuredClone(workspace)); };
@@ -334,26 +360,29 @@ async function runBenchmarks(): Promise<Metric[]> {
       },
     );
     const app = createApp(store, provider, false, runtime);
+    server = createServer(app);
+    await new Promise<void>((resolveListen, rejectListen) => server!.listen(0, '127.0.0.1', () => resolveListen()).once('error', rejectListen));
     return [
       await measure('workspace_query_latency_ms', async () => {
-        await request(app).get('/api/workspace').expect(200);
+        await request(server!).get('/api/workspace').timeout({ deadline: profile.requests.timeoutMs }).expect(200);
       }),
       await measure('workspace_command_latency_ms', async () => {
-        await request(app).patch('/api/workspace/mode').send({ mode: 'Strict' }).expect(200);
+        await request(server!).patch('/api/workspace/mode').send({ mode: 'Strict' }).timeout({ deadline: profile.requests.timeoutMs }).expect(200);
       }, reset),
       await measure('legacy_graph_workspace_read_latency_ms', async () => {
-        const response = await request(app).get('/api/workspace').expect(200);
+        const response = await request(server!).get('/api/workspace').timeout({ deadline: profile.requests.timeoutMs }).expect(200);
         response.body.workspace.discussionNodes.map((node: DiscussionNode) => ({ id: node.id, status: node.status }));
       }),
       await measure('context_plan_latency_ms', async () => {
-        planContext(workspace, 'How should synthetic transaction idempotency work?');
+        planContext(workspace, profile.requests.contextPrompt);
       }),
       await measure('stream_chat_commit_latency_ms', async () => {
-        await request(app).post('/api/chat/stream').send({ message: 'synthetic benchmark request' }).expect(200);
+        await request(server!).post('/api/chat/stream').send({ message: profile.requests.streamMessage }).timeout({ deadline: profile.requests.timeoutMs }).expect(200);
       }, reset),
     ];
   } finally {
     console.info = originalInfo;
+    if (server?.listening) await new Promise<void>((resolveClose, rejectClose) => server!.close(error => error ? rejectClose(error) : resolveClose()));
     await rm(directory, { recursive: true, force: true });
   }
 }
@@ -395,35 +424,69 @@ async function run(): Promise<void> {
   if (writeEvidence) {
     execFileSync('pnpm', ['run', 'test:g0'], { cwd: root, stdio: 'inherit' });
   }
+  // A normal verification must fail for a missing, lightweight, or mispointed baseline tag.
+  const baseline = update ? undefined : verifyBaselineTag();
   const validator = await createValidator();
   const profile = await readJson<JsonObject>(join(gates, 'environment-profile.json'));
   assertValid(validator, 'https://rhiza.dev/architecture-gates/environment-profile/1.0.0', profile);
   const fixture = await verifyFixtures(validator);
+  const performanceProfile = await readJson<PerformanceProfile>(join(gates, 'performance-profile.json'));
+  assertValid(validator, 'https://rhiza.dev/architecture-gates/performance-profile/1.0.0', performanceProfile);
+  if (!fixture.registry.fixtures.some(entry => entry.id === performanceProfile.baseFixtureId && entry.schema_id === 'https://rhiza.dev/architecture-gates/workspace-fixture/1.0.0')) {
+    fail(`performance profile references an unregistered workspace fixture: ${performanceProfile.baseFixtureId}`);
+  }
   const characterizationCount = await verifyCharacterizationMap();
   const snapshotChecksums = await verifySnapshots(fixture.digest);
-  const metrics = await runBenchmarks();
+  const performanceProfileChecksum = sha256(await readFile(join(gates, 'performance-profile.json')));
+  const metrics = await runBenchmarks(fixture.registry, performanceProfile);
   console.table(metrics);
   console.log(`fixture registry ${fixture.digest}; characterization ${characterizationCount}/${characterizationCount}`);
 
+  if (metrics.some(metric => metric.failures || metric.timeouts || metric.drops)) {
+    fail('benchmark samples contain failures, timeouts, or drops; no pass evidence was generated');
+  }
+
   if (!writeEvidence) {
-    try {
+    if (!update) {
+      try {
       const existingEvidence = await readJson<JsonObject>(join(gates, 'G0/evidence.json'));
       assertValid(validator, 'https://rhiza.dev/architecture-gates/evidence-manifest/1.0.0', existingEvidence);
+      if (existingEvidence.fixture_digest !== fixture.digest) fail('archived evidence fixture_digest drift');
+      const expectedCommit = execFileSync('git', ['rev-parse', 'HEAD^'], { cwd: root, encoding: 'utf8' }).trim();
+      if (existingEvidence.commit !== expectedCommit) fail(`archived evidence commit must equal HEAD^ (${expectedCommit})`);
       const checksums = existingEvidence.checksums as JsonObject;
-      for (const descriptor of existingEvidence.artifact_descriptors as JsonObject[]) {
-        if (!(String(descriptor.checksum_ref) in checksums)) {
-          fail(`evidence artifact ${String(descriptor.artifact_id)} has an unknown checksum_ref`);
+      const expectedChecksums = { ...snapshotChecksums, 'fixture-registry.json': fixture.digest, 'performance-profile.json': performanceProfileChecksum };
+      for (const [path, digest] of Object.entries(expectedChecksums)) {
+        const record = checksums[path] as JsonObject | undefined;
+        if (!record || record.algorithm !== 'sha256' || record.value !== digest.replace(/^sha256:/, '')) {
+          fail(`archived evidence checksum drift: ${path}`);
         }
       }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      for (const descriptor of existingEvidence.artifact_descriptors as JsonObject[]) {
+        const path = String(descriptor.path);
+        const checksumRef = String(descriptor.checksum_ref);
+        if (!(checksumRef in checksums) || checksumRef !== path) {
+          fail(`evidence artifact ${String(descriptor.artifact_id)} has an unknown checksum_ref`);
+        }
+        const expected = expectedChecksums[path as keyof typeof expectedChecksums];
+        if (!expected) fail(`evidence artifact ${String(descriptor.artifact_id)} references an unknown path`);
+      }
+      const expectedMetrics = ['workspace_query_latency_ms', 'workspace_command_latency_ms', 'legacy_graph_workspace_read_latency_ms', 'context_plan_latency_ms', 'stream_chat_commit_latency_ms'];
+      const recorded = existingEvidence.observed_metrics as Record<string, Metric>;
+      if (Object.keys(recorded).sort().join('|') !== expectedMetrics.sort().join('|')) fail('archived evidence metric key drift');
+      for (const metric of Object.values(recorded)) {
+        if (metric.warmup_count !== 20 || metric.sample_count !== 200 || metric.failures !== 0 || metric.timeouts !== 0 || metric.drops !== 0) fail(`archived evidence metric counts drift: ${metric.metric}`);
+      }
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+      }
     }
     return;
   }
-  const baseline = verifyBaselineTag();
+  const evidenceBaseline = baseline ?? verifyBaselineTag();
   const observedMetrics = Object.fromEntries(metrics.map(metric => [metric.metric, metric]));
   const checksumRecords = Object.fromEntries(
-    Object.entries({ ...snapshotChecksums, 'fixture-registry.json': fixture.digest }).map(([id, digest]) => [
+    Object.entries({ ...snapshotChecksums, 'fixture-registry.json': fixture.digest, 'performance-profile.json': performanceProfileChecksum }).map(([id, digest]) => [
       id,
       { algorithm: 'sha256', value: digest.replace(/^sha256:/, '') },
     ]),
@@ -434,7 +497,7 @@ async function run(): Promise<void> {
     gate_id: 'G0',
     architecture_version: '0818-v3.0',
     commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
-    baseline,
+    baseline: evidenceBaseline,
     fixture_id: 'g0-fixture-registry-v1',
     fixture_digest: fixture.digest,
     command: 'pnpm g0:evidence',

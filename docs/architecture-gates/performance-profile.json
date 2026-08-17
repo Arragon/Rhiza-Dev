@@ -1,0 +1,20 @@
+{
+  "profileVersion": "1.0.0",
+  "id": "g0-legacy-300-node-v1",
+  "baseFixtureId": "g0-branch-context-provider-v1",
+  "nodeCount": 300,
+  "node": {
+    "idPrefix": "g0-node-",
+    "titleTemplate": "G0 synthetic node {index}",
+    "summary": "Synthetic graph baseline.",
+    "periodicSummary": "Synthetic transaction idempotency context evidence.",
+    "periodicEvery": 13,
+    "createdAt": "2026-08-18T00:00:00.000Z"
+  },
+  "message": { "idPrefix": "g0-message-", "textFrom": "nodeSummary", "createdAt": "2026-08-18T00:00:00.000Z" },
+  "requests": {
+    "contextPrompt": "How should synthetic transaction idempotency work?",
+    "streamMessage": "synthetic benchmark request",
+    "timeoutMs": 5000
+  }
+}

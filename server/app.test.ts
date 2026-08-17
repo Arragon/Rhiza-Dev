@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -12,7 +13,11 @@ import { SecretVault } from './secret-vault';
 import { WorkspaceStore } from './store';
 
 const temporaryDirectories: string[] = [];
-afterEach(async () => Promise.all(temporaryDirectories.splice(0).map(directory => rm(directory, { recursive: true, force: true }))));
+const servers: Server[] = [];
+afterEach(async () => {
+  await Promise.all(servers.splice(0).map(server => new Promise<void>((resolveClose, rejectClose) => server.close(error => error ? rejectClose(error) : resolveClose()))));
+  await Promise.all(temporaryDirectories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
+});
 
 async function testApp(runtime?: AIRuntime) {
   const directory = await mkdtemp(join(tmpdir(), 'rhiza-'));
@@ -20,7 +25,10 @@ async function testApp(runtime?: AIRuntime) {
   const store = new WorkspaceStore(join(directory, 'workspace.json'));
   const fetcher = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => new Response(JSON.stringify({ choices: [{ message: { content: '后端生成的回答' } }] }), { status: 200 })) as unknown as typeof fetch;
   const provider = new ProviderService(new ProviderStore(join(directory, 'providers.json')), new SecretVault(join(directory, '.provider-key')), { baseUrl: 'https://example.test/v1', apiKey: 'test-key', model: 'test-model', providerName: 'Test', chatPath: '/chat/completions', timeoutMs: 1000, temperature: 0.4, extraHeaders: {}, allowNoKey: false }, fetcher);
-  return { app: createApp(store, provider, false, runtime, undefined, join(directory, 'uploads')), store, filePath: join(directory, 'workspace.json'), providerPath: join(directory, 'providers.json'), fetcher: fetcher as unknown as ReturnType<typeof vi.fn> };
+  const server = createServer(createApp(store, provider, false, runtime, undefined, join(directory, 'uploads')));
+  await new Promise<void>((resolveListen, rejectListen) => server.listen(0, '127.0.0.1', resolveListen).once('error', rejectListen));
+  servers.push(server);
+  return { app: server, store, filePath: join(directory, 'workspace.json'), providerPath: join(directory, 'providers.json'), fetcher: fetcher as unknown as ReturnType<typeof vi.fn> };
 }
 
 describe('Rhiza API', () => {

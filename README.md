@@ -105,9 +105,10 @@ ExecutorProfile · RunGroup · Handoff · Extension
 ## 本地运行
 
 ```bash
-npm install
+corepack enable
+pnpm install --frozen-lockfile
 cp .env.example .env
-npm run dev
+pnpm run dev
 ```
 
 > Windows PowerShell 请使用 `Copy-Item .env.example .env`。
@@ -117,8 +118,8 @@ npm run dev
 生产式本地运行：
 
 ```bash
-npm run build
-npm start
+pnpm run build
+pnpm start
 ```
 
 默认打开 `http://127.0.0.1:8787`，由同一个进程提供网页与 API。
@@ -160,8 +161,8 @@ RHIZA_FEATURE_FLAGS=postgresPersistence=true,libreChatRuntime=false,fileContext=
 如需验证 PostgreSQL migration baseline，请先提供一个空测试库：
 
 ```bash
-DATABASE_URL=postgresql://rhiza:rhiza@127.0.0.1:5432/rhiza_test npm run db:migrate
-DATABASE_URL=postgresql://rhiza:rhiza@127.0.0.1:5432/rhiza_test npm run db:status
+DATABASE_URL=postgresql://rhiza:rhiza@127.0.0.1:5432/rhiza_test pnpm run db:migrate
+DATABASE_URL=postgresql://rhiza:rhiza@127.0.0.1:5432/rhiza_test pnpm run db:status
 ```
 
 迁移按文件名排序、逐个事务执行并记录 SHA-256 checksum；重复执行不会重复建表，已应用 SQL 被改写时会失败。
@@ -169,16 +170,16 @@ DATABASE_URL=postgresql://rhiza:rhiza@127.0.0.1:5432/rhiza_test npm run db:statu
 ## 验证
 
 ```bash
-npm run verify:m6
+pnpm run verify:m6
 ```
 
-该门禁串联 lint、严格 TypeScript 检查、单元测试、E2E、许可证一致性与生产构建。也可按里程碑运行 `verify:m0` 至 `verify:m5`，或使用 `npm run benchmark:m5` 运行 Context Planner 基准。
+该门禁串联 lint、严格 TypeScript 检查、单元测试、E2E、许可证一致性与生产构建。也可按里程碑运行 `verify:m0` 至 `verify:m5`，或使用 `pnpm run benchmark:m5` 运行 Context Planner 基准。仓库以 `pnpm-lock.yaml` 与 `packageManager` 字段固定 pnpm 版本；不要混用 npm 生成第二份 lockfile。
 
 第三方许可证报告可重复生成并核对：
 
 ```bash
-npm run licenses:generate
-npm run licenses:verify
+pnpm run licenses:generate
+pnpm run licenses:verify
 ```
 
 报告写入 `reports/third-party-licenses.json`。

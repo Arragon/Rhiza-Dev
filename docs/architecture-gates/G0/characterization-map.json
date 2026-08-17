@@ -2,6 +2,7 @@
   "version": "1.0.0",
   "gate": "G0",
   "coverage": [
+    { "behavior": "fixture route/retry", "file": "server/g0-fixture-characterization.test.ts", "title": "loads registered workspace and error-retry fixtures to characterize route and recovery semantics" },
     { "behavior": "chat", "file": "server/app.test.ts", "title": "calls the provider and stores messages with a manifest" },
     { "behavior": "branch", "file": "server/app.test.ts", "title": "creates, moves and merges a formal discussion branch" },
     { "behavior": "edit/resend", "file": "server/app.test.ts", "title": "creates traceable Edit & Resend and Regenerate event versions without overwriting history" },

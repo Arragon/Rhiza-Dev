@@ -29,6 +29,9 @@ jobs:
       DATABASE_URL: postgresql://rhiza:rhiza@127.0.0.1:5432/rhiza_test
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
       - uses: pnpm/action-setup@v4
         with:
           version: 11.19.0

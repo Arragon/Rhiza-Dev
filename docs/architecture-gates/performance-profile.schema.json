@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rhiza.dev/architecture-gates/performance-profile/1.0.0",
+  "type": "object",
+  "required": ["profileVersion", "id", "baseFixtureId", "nodeCount", "node", "message", "requests"],
+  "additionalProperties": false,
+  "properties": {
+    "profileVersion": { "const": "1.0.0" },
+    "id": { "const": "g0-legacy-300-node-v1" },
+    "baseFixtureId": { "const": "g0-branch-context-provider-v1" },
+    "nodeCount": { "const": 300 },
+    "node": {
+      "type": "object", "required": ["idPrefix", "titleTemplate", "summary", "periodicSummary", "periodicEvery", "createdAt"], "additionalProperties": false,
+      "properties": {
+        "idPrefix": { "type": "string", "minLength": 1 }, "titleTemplate": { "type": "string", "pattern": "\\{index\\}" },
+        "summary": { "type": "string", "minLength": 1 }, "periodicSummary": { "type": "string", "minLength": 1 },
+        "periodicEvery": { "type": "integer", "minimum": 1 }, "createdAt": { "type": "string", "format": "date-time" }
+      }
+    },
+    "message": {
+      "type": "object", "required": ["idPrefix", "textFrom", "createdAt"], "additionalProperties": false,
+      "properties": { "idPrefix": { "type": "string", "minLength": 1 }, "textFrom": { "const": "nodeSummary" }, "createdAt": { "type": "string", "format": "date-time" } }
+    },
+    "requests": {
+      "type": "object", "required": ["contextPrompt", "streamMessage", "timeoutMs"], "additionalProperties": false,
+      "properties": { "contextPrompt": { "type": "string", "minLength": 1 }, "streamMessage": { "type": "string", "minLength": 1 }, "timeoutMs": { "type": "integer", "minimum": 100, "maximum": 30000 } }
+    }
+  }
+}

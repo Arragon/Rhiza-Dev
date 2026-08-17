@@ -1,9 +1,16 @@
+import { randomUUID } from 'node:crypto';
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
-import type { WorkspaceData } from './domain';
+import type { AuditEvent, WorkspaceData } from './domain';
 import { createSeedWorkspace } from './seed';
 
-export class WorkspaceStore {
+export interface WorkspaceRepository {
+  read(): Promise<WorkspaceData>;
+  update(mutator: (current: WorkspaceData) => WorkspaceData | Promise<WorkspaceData>): Promise<WorkspaceData>;
+  close?(): Promise<void>;
+}
+
+export class WorkspaceStore implements WorkspaceRepository {
   private queue: Promise<void> = Promise.resolve();
 
   constructor(private readonly filePath = resolve('var/data/workspace.json')) {}
@@ -27,13 +34,19 @@ export class WorkspaceStore {
     return {
       ...fallback,
       ...raw,
+      projectTitle: raw.projectTitle || fallback.projectTitle,
       nodeId: activeNodeId,
       activeNodeId,
       discussionNodes,
       discussionEdges: raw.discussionEdges || [],
+      anchors: raw.anchors || [],
       messages: (raw.messages || fallback.messages).map(message => ({ ...message, nodeId: message.nodeId || activeNodeId })),
+      attachments: raw.attachments || [],
+      fileChunks: raw.fileChunks || [],
       contextItems: raw.contextItems || fallback.contextItems,
       manifests: raw.manifests || [],
+      segments: raw.segments || [],
+      auditEvents: raw.auditEvents || [],
       mode: raw.mode || fallback.mode,
       updatedAt: raw.updatedAt || now,
     };
@@ -41,10 +54,16 @@ export class WorkspaceStore {
 
   async update(mutator: (current: WorkspaceData) => WorkspaceData | Promise<WorkspaceData>): Promise<WorkspaceData> {
     let result!: WorkspaceData;
-    this.queue = this.queue.then(async () => {
+    this.queue = this.queue.catch(() => undefined).then(async () => {
       const current = await this.read();
       result = await mutator(structuredClone(current));
       result.updatedAt = new Date().toISOString();
+      const audit: AuditEvent = {
+        id: randomUUID(), projectId: result.projectId, nodeId: result.activeNodeId,
+        action: 'workspace.updated', entityType: 'workspace', entityId: result.projectId,
+        metadata: { backend: 'json' }, createdAt: result.updatedAt,
+      };
+      result.auditEvents = [...(result.auditEvents || []), audit];
       await this.write(result);
     });
     await this.queue;

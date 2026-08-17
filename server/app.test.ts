@@ -20,7 +20,7 @@ async function testApp(runtime?: AIRuntime) {
   const store = new WorkspaceStore(join(directory, 'workspace.json'));
   const fetcher = vi.fn(async (_url: string | URL | Request, _init?: RequestInit) => new Response(JSON.stringify({ choices: [{ message: { content: '后端生成的回答' } }] }), { status: 200 })) as unknown as typeof fetch;
   const provider = new ProviderService(new ProviderStore(join(directory, 'providers.json')), new SecretVault(join(directory, '.provider-key')), { baseUrl: 'https://example.test/v1', apiKey: 'test-key', model: 'test-model', providerName: 'Test', chatPath: '/chat/completions', timeoutMs: 1000, temperature: 0.4, extraHeaders: {}, allowNoKey: false }, fetcher);
-  return { app: createApp(store, provider, false, runtime), filePath: join(directory, 'workspace.json'), providerPath: join(directory, 'providers.json'), fetcher: fetcher as unknown as ReturnType<typeof vi.fn> };
+  return { app: createApp(store, provider, false, runtime, undefined, join(directory, 'uploads')), store, filePath: join(directory, 'workspace.json'), providerPath: join(directory, 'providers.json'), fetcher: fetcher as unknown as ReturnType<typeof vi.fn> };
 }
 
 describe('Rhiza API', () => {
@@ -30,6 +30,42 @@ describe('Rhiza API', () => {
     const persisted = JSON.parse(await readFile(filePath, 'utf8'));
     expect(persisted.contextItems.find((item: { id: string }) => item.id === 'c3').status).toBe('active');
     expect(persisted.contextItems.find((item: { id: string }) => item.id === 'c3').selectionMode).toBe('AI_RECOMMENDED_ACCEPTED');
+  });
+
+  it('adds Node and Segment sources and supports pin, remove, exclude and restore', async () => {
+    const { app } = await testApp();
+    const nodeResponse = await request(app).post('/api/graph/nodes').send({ title: '上下文来源节点', summary: '用于 M4 验收', x: 620, y: 260 }).expect(201);
+    const node = nodeResponse.body.workspace.discussionNodes.find((item: { title: string }) => item.title === '上下文来源节点');
+    const segmentResponse = await request(app).post(`/api/nodes/${node.id}/segments`).send({ title: '验收片段', messageIds: [] }).expect(201);
+    const segment = segmentResponse.body.segment;
+
+    const addedNode = await request(app).post('/api/workspace/context').send({ sourceType: 'node', sourceId: node.id }).expect(201);
+    const nodeContext = addedNode.body.workspace.contextItems.find((item: { sourceId?: string }) => item.sourceId === node.id);
+    expect(nodeContext).toMatchObject({ sourceType: 'node', status: 'active', selectionMode: 'USER_SELECTED' });
+    await request(app).patch(`/api/workspace/context/${nodeContext.id}`).send({ pinned: true }).expect(200);
+    await request(app).patch(`/api/workspace/context/${nodeContext.id}`).send({ status: 'recommended' }).expect(200);
+    await request(app).patch(`/api/workspace/context/${nodeContext.id}`).send({ status: 'excluded' }).expect(200);
+    const restored = await request(app).patch(`/api/workspace/context/${nodeContext.id}`).send({ status: 'active' }).expect(200);
+    expect(restored.body.workspace.contextItems.find((item: { id: string }) => item.id === nodeContext.id)).toMatchObject({ status: 'active', pinned: false });
+
+    const addedSegment = await request(app).post('/api/workspace/context').send({ sourceType: 'segment', sourceId: segment.id }).expect(201);
+    expect(addedSegment.body.workspace.contextItems).toEqual(expect.arrayContaining([expect.objectContaining({ sourceType: 'segment', sourceId: segment.id, sourceNodeId: node.id })]));
+  });
+
+  it('preserves pinned context over budget and freezes a new immutable manifest for Regenerate', async () => {
+    const { app, store } = await testApp();
+    await store.update(current => ({ ...current, contextItems: current.contextItems.map(item => item.id === 'c2' ? { ...item, tokens: 40_000, pinned: true } : item) }));
+    const first = await request(app).post('/api/chat').send({ message: '比较上下文' }).expect(201);
+    expect(first.body.manifest.estimatedTokens).toBeGreaterThan(32_000);
+    expect(first.body.manifest.contextItems).toEqual(expect.arrayContaining([expect.objectContaining({ sourceId: 'interview-round-02', pinned: true, tokenCount: 40_000 })]));
+
+    await request(app).patch('/api/workspace/context/c2').send({ status: 'excluded' }).expect(200);
+    const regenerated = await request(app).post('/api/chat').send({ message: '占位', operation: 'regenerate', sourceMessageId: first.body.assistantMessage.id }).expect(201);
+    expect(regenerated.body.manifest.id).not.toBe(first.body.manifest.id);
+    expect(regenerated.body.manifest.contextItemIds).not.toContain('c2');
+    const snapshot = await request(app).get('/api/workspace').expect(200);
+    expect(snapshot.body.workspace.manifests[0]).toEqual(first.body.manifest);
+    expect(snapshot.body.workspace.manifests).toHaveLength(2);
   });
 
   it('calls the provider and stores messages with a manifest', async () => {
@@ -43,8 +79,8 @@ describe('Rhiza API', () => {
     });
     expect(response.body.manifest.requestId).toEqual(expect.any(String));
     expect(response.body.manifest.contextItems).toEqual(expect.arrayContaining([
-      expect.objectContaining({ sourceId: 'c1', sourceType: 'context-item', selectionMode: 'CURRENT', contentVersion: 1 }),
-      expect.objectContaining({ sourceId: 'c2', selectionMode: 'USER_SELECTED' }),
+      expect.objectContaining({ sourceId: 'information-architecture', sourceType: 'node', title: '信息架构方向', selectionMode: 'CURRENT', contentVersion: 1 }),
+      expect.objectContaining({ sourceId: 'interview-round-02', sourceType: 'reference', selectionMode: 'USER_SELECTED', pinned: true }),
     ]));
     const workspace = await request(app).get('/api/workspace').expect(200);
     expect(workspace.body.workspace.messages).toHaveLength(4);
@@ -117,10 +153,12 @@ describe('Rhiza API', () => {
 
   it('creates, moves and merges a formal discussion branch', async () => {
     const { app, filePath } = await testApp();
-    const created = await request(app).post('/api/nodes').send({ title: '检索策略支线', sourceMessageId: 'm2', anchorText: '验证分层检索策略', messages: [{ kind: 'user', text: '临时问题', createdAt: '2026-08-09T12:00:20.000Z' }, { kind: 'assistant', text: '临时结论', createdAt: '2026-08-09T12:00:21.000Z' }] }).expect(201);
+    const created = await request(app).post('/api/nodes').send({ title: '检索策略支线', sourceMessageId: 'm2', anchorText: '渐进式上下文', anchorStart: 16, anchorEnd: 23, messages: [{ kind: 'user', text: '临时问题', createdAt: '2026-08-09T12:00:20.000Z' }, { kind: 'assistant', text: '临时结论', createdAt: '2026-08-09T12:00:21.000Z' }] }).expect(201);
     const branch = created.body.workspace.discussionNodes.find((node: { kind: string }) => node.kind === 'branch');
     expect(branch).toMatchObject({ title: '检索策略支线', sourceNodeId: 'information-architecture', status: 'active' });
-    expect(created.body.workspace.discussionEdges[0]).toMatchObject({ source: 'information-architecture', target: branch.id, relation: 'derived-from' });
+    const anchor = created.body.workspace.anchors[0];
+    expect(anchor).toMatchObject({ nodeId: 'information-architecture', messageId: 'm2', selectedText: '渐进式上下文' });
+    expect(created.body.workspace.discussionEdges[0]).toMatchObject({ source: 'information-architecture', target: branch.id, relation: 'derived-from', anchorId: anchor.id });
     expect(created.body.workspace.messages.filter((message: { nodeId: string }) => message.nodeId === branch.id).map((message: { text: string }) => message.text)).toEqual(['临时问题', '临时结论']);
 
     await request(app).patch(`/api/nodes/${branch.id}/position`).send({ x: 612, y: 286 }).expect(200);
@@ -129,6 +167,24 @@ describe('Rhiza API', () => {
     expect(merged.body.workspace.discussionNodes.find((node: { id: string }) => node.id === branch.id)).toMatchObject({ x: 612, y: 286, status: 'resolved' });
     expect(merged.body.workspace.discussionEdges.some((edge: { relation: string }) => edge.relation === 'merged-into')).toBe(true);
     expect(JSON.parse(await readFile(filePath, 'utf8')).discussionNodes).toHaveLength(2);
+  });
+
+  it('creates retrieval segments and keeps archive semantics distinct from deletion', async () => {
+    const { app } = await testApp();
+    const initial = await request(app).get('/api/workspace').expect(200);
+    const messageIds = initial.body.workspace.messages.map((message: { id: string }) => message.id);
+    const segmented = await request(app).post('/api/nodes/information-architecture/segments').send({ title: '访谈结论', messageIds }).expect(201);
+    expect(segmented.body.segment).toMatchObject({ nodeId: 'information-architecture', ordinal: 1, title: '访谈结论' });
+    expect(segmented.body.workspace.messages.every((message: { segmentId: string }) => message.segmentId === segmented.body.segment.id)).toBe(true);
+
+    const branchResponse = await request(app).post('/api/graph/nodes').send({ title: '可归档支线' }).expect(201);
+    const branch = branchResponse.body.workspace.discussionNodes.find((node: { title: string }) => node.title === '可归档支线');
+    await request(app).post(`/api/nodes/${branch.id}/activate`).expect(200);
+    const archived = await request(app).patch(`/api/nodes/${branch.id}/status`).send({ status: 'archived' }).expect(200);
+    expect(archived.body.workspace.activeNodeId).toBe('information-architecture');
+    await request(app).post(`/api/nodes/${branch.id}/activate`).expect(409);
+    await request(app).patch(`/api/nodes/${branch.id}/status`).send({ status: 'active' }).expect(200);
+    await request(app).post(`/api/nodes/${branch.id}/activate`).expect(200);
   });
 
   it('keeps runtime history and persisted messages scoped to the active graph node', async () => {
@@ -151,9 +207,9 @@ describe('Rhiza API', () => {
     const createdNode = await request(app).post('/api/graph/nodes').send({ title: '检索实验', summary: '验证关系图谱编辑能力', x: 620, y: 280 }).expect(201);
     const node = createdNode.body.workspace.discussionNodes.find((item: { title: string }) => item.title === '检索实验');
     expect(node).toMatchObject({ status: 'draft', kind: 'branch', x: 620, y: 280 });
-    const createdEdge = await request(app).post('/api/graph/edges').send({ source: 'information-architecture', target: node.id, relation: 'references', label: '实验关联' }).expect(201);
+    const createdEdge = await request(app).post('/api/graph/edges').send({ source: 'information-architecture', target: node.id, relation: 'related-to', label: '实验关联' }).expect(201);
     const edge = createdEdge.body.workspace.discussionEdges[0];
-    expect(edge).toMatchObject({ source: 'information-architecture', target: node.id, relation: 'references', label: '实验关联' });
+    expect(edge).toMatchObject({ source: 'information-architecture', target: node.id, relation: 'related-to', label: '实验关联' });
     await request(app).delete(`/api/graph/edges/${edge.id}`).expect(200);
     await request(app).delete(`/api/graph/nodes/${node.id}`).expect(200);
     const workspace = await request(app).get('/api/workspace').expect(200);
@@ -169,5 +225,71 @@ describe('Rhiza API', () => {
     expect(response.body.assistantMessage).toMatchObject({ kind: 'assistant', text: '后端生成的回答' });
     expect(response.body.assistantMessage.nodeId).toBe('temp:information-architecture');
     expect(await readFile(filePath, 'utf8')).toBe(before);
+  });
+
+  it('keeps all messages and manifests across 100 ordinary conversation rounds', async () => {
+    const fastRuntime: AIRuntime = {
+      kind: 'provider-adapter',
+      listModels: async () => [{ id: 'model-1', provider: 'Load Test', model: 'load-model', displayName: 'Load Model', active: true }],
+      async *generate(input) {
+        yield { type: 'RUN_START', requestId: input.requestId, manifestId: input.manifestId, model: 'load-model', provider: 'Load Test' };
+        yield { type: 'CONTENT_DELTA', requestId: input.requestId, delta: `回答:${input.prompt}` };
+        yield { type: 'RUN_END', requestId: input.requestId, text: `回答:${input.prompt}`, model: 'load-model', provider: 'Load Test', usage: { promptTokens: 2, completionTokens: 3, totalTokens: 5 } };
+      },
+    };
+    const { app } = await testApp(fastRuntime);
+    for (let round = 1; round <= 100; round += 1) {
+      await request(app).post('/api/chat').send({ message: `第 ${round} 轮` }).expect(201);
+    }
+    const snapshot = await request(app).get('/api/workspace').expect(200);
+    expect(snapshot.body.workspace.messages).toHaveLength(202);
+    expect(snapshot.body.workspace.manifests).toHaveLength(100);
+    expect(new Set(snapshot.body.workspace.messages.map((message: { id: string }) => message.id)).size).toBe(202);
+    expect(snapshot.body.workspace.messages.slice(-2).map((message: { text: string }) => message.text)).toEqual(['第 100 轮', '回答:第 100 轮']);
+  });
+
+  it('creates traceable Edit & Resend and Regenerate event versions without overwriting history', async () => {
+    const { app } = await testApp();
+    const first = await request(app).post('/api/chat').send({ message: '原始版本' }).expect(201);
+    const edited = await request(app).post('/api/chat').send({ message: '编辑后的版本', operation: 'edit-resend', sourceMessageId: first.body.userMessage.id }).expect(201);
+    const regenerated = await request(app).post('/api/chat').send({ message: '服务端会忽略此占位文本', operation: 'regenerate', sourceMessageId: edited.body.assistantMessage.id }).expect(201);
+
+    expect(edited.body.userMessage).toMatchObject({ text: '编辑后的版本', operation: 'edit-resend', sourceMessageId: first.body.userMessage.id, version: 2, versionGroupId: first.body.userMessage.id });
+    expect(regenerated.body.userMessage).toMatchObject({ text: '编辑后的版本', operation: 'regenerate', sourceMessageId: edited.body.assistantMessage.id, version: 3, versionGroupId: first.body.userMessage.id });
+    const snapshot = await request(app).get('/api/workspace').expect(200);
+    expect(snapshot.body.workspace.messages.map((message: { text: string }) => message.text)).toEqual(expect.arrayContaining(['原始版本', '编辑后的版本']));
+    expect(snapshot.body.workspace.messages.filter((message: { versionGroupId?: string }) => message.versionGroupId === first.body.userMessage.id)).toHaveLength(6);
+    expect(snapshot.body.workspace.manifests.slice(-2).map((manifest: { operation: string }) => manifest.operation)).toEqual(['edit-resend', 'regenerate']);
+  });
+
+  it('uploads a text attachment, displays its metadata and includes its content in the provider call', async () => {
+    const { app, fetcher } = await testApp();
+    const uploaded = await request(app).post('/api/attachments').send({ name: 'brief.txt', mimeType: 'text/plain', dataBase64: Buffer.from('附件中的验收约束').toString('base64') }).expect(201);
+    expect(uploaded.body.attachment).toMatchObject({ name: 'brief.txt', mimeType: 'text/plain', kind: 'file' });
+    expect(uploaded.body.attachment).not.toHaveProperty('extractedText');
+    const turn = await request(app).post('/api/chat').send({ message: '总结附件', attachmentIds: [uploaded.body.attachment.id], generation: { temperature: 0.2, topP: 0.8, maxTokens: 512 } }).expect(201);
+    expect(turn.body.userMessage.attachmentIds).toEqual([uploaded.body.attachment.id]);
+    expect(turn.body.manifest).toMatchObject({ attachmentIds: [uploaded.body.attachment.id], generation: { temperature: 0.2, topP: 0.8, maxTokens: 512 } });
+    expect(turn.body.manifest.contextItems).toEqual(expect.arrayContaining([expect.objectContaining({ sourceType: 'chunk', selectionMode: 'USER_SELECTED', reason: expect.stringContaining('本轮显式附加文件') })]));
+    expect(turn.body.manifest.planner).toMatchObject({ fallback: false, candidateCount: expect.any(Number) });
+    const payload = JSON.parse(String(fetcher.mock.calls.at(-1)?.[1]?.body));
+    expect(payload).toMatchObject({ temperature: 0.2, top_p: 0.8, max_tokens: 512 });
+    expect(payload.messages.at(-1).content).toContain('brief.txt');
+    expect(payload.messages.at(-1).content).toContain('附件中的验收约束');
+  });
+
+  it('runs three provider profiles through the same Runtime contract', async () => {
+    const { app, fetcher } = await testApp();
+    await request(app).get('/api/providers').expect(200);
+    await request(app).post('/api/providers').send({ preset: 'deepseek', name: 'DeepSeek', baseUrl: 'https://deepseek.test/v1', apiKey: 'key-2', allowNoKey: false, modelId: 'deepseek-chat' }).expect(201);
+    await request(app).post('/api/providers').send({ preset: 'openrouter', name: 'OpenRouter', baseUrl: 'https://openrouter.test/v1', apiKey: 'key-3', allowNoKey: false, modelId: 'openrouter-model' }).expect(201);
+    const catalog = (await request(app).get('/api/providers').expect(200)).body.catalog;
+    expect(catalog.providers).toHaveLength(3);
+    for (const model of catalog.models) {
+      await request(app).post(`/api/models/${model.id}/select`).expect(200);
+      await request(app).post('/api/chat').send({ message: `profile:${model.modelId}` }).expect(201);
+    }
+    const models = fetcher.mock.calls.slice(-3).map(call => JSON.parse(String(call[1]?.body)).model);
+    expect(new Set(models)).toEqual(new Set(['test-model', 'deepseek-chat', 'openrouter-model']));
   });
 });

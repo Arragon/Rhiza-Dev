@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  m2-acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: rhiza
+          POSTGRES_PASSWORD: rhiza
+          POSTGRES_DB: rhiza_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U rhiza -d rhiza_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://rhiza:rhiza@127.0.0.1:5432/rhiza_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run test:unit
+      - run: npm run test:e2e
+      - run: npm run licenses:verify
+      - run: npm run build

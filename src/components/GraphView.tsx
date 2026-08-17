@@ -1,12 +1,12 @@
-import { useRef, useState } from 'react';
-import { Check, Focus, Grip, Link2, Minus, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Check, Focus, Grip, Link2, Maximize2, Minus, Plus, RotateCcw, Search, Trash2, X } from 'lucide-react';
 import type { DiscussionEdge, DiscussionNode, EdgeRelation } from '../types';
 
 const STAGE_WIDTH = 2200;
 const STAGE_HEIGHT = 1400;
 const NODE_WIDTH = 148;
 const NODE_HEIGHT = 84;
-const EDGE_LABELS: Record<EdgeRelation, string> = { 'derived-from': '衍生支线', references: '关联参考', 'merged-into': '选择性合并' };
+const EDGE_LABELS: Record<EdgeRelation, string> = { 'derived-from': '衍生支线', references: '引用', 'related-to': '相关', 'merged-into': '选择性合并' };
 
 type Point = { x: number; y: number };
 type Viewport = Point & { scale: number };
@@ -53,6 +53,27 @@ export function GraphView({ nodes, edges, activeNodeId, onMove, onActivate, onCr
     const position = positionOf(node);
     setViewport(current => ({ ...current, x: Math.round(rect.width / 2 - (position.x + NODE_WIDTH / 2) * current.scale), y: Math.round(rect.height / 2 - (position.y + NODE_HEIGHT / 2) * current.scale) }));
   };
+  const fitNodes = (items = nodes) => {
+    const rect = canvasRef.current?.getBoundingClientRect();
+    if (!rect || !items.length) return;
+    const points = items.map(positionOf);
+    const minX = Math.min(...points.map(point => point.x));
+    const minY = Math.min(...points.map(point => point.y));
+    const maxX = Math.max(...points.map(point => point.x + NODE_WIDTH));
+    const maxY = Math.max(...points.map(point => point.y + NODE_HEIGHT));
+    const padding = 72;
+    const scale = Math.max(.55, Math.min(1.4, Math.min((rect.width - padding * 2) / Math.max(NODE_WIDTH, maxX - minX), (rect.height - padding * 2) / Math.max(NODE_HEIGHT, maxY - minY))));
+    setViewport({ scale, x: Math.round((rect.width - (maxX - minX) * scale) / 2 - minX * scale), y: Math.round((rect.height - (maxY - minY) * scale) / 2 - minY * scale) });
+  };
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => {
+      const active = nodes.find(node => node.id === activeNodeId);
+      if (active) focusNode(active);
+    });
+    return () => cancelAnimationFrame(frame);
+    // Focus only when navigation changes; graph edits should not pull the viewport away.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeNodeId]);
   const zoomAt = (nextScale: number, clientX?: number, clientY?: number) => {
     const rect = canvasRef.current?.getBoundingClientRect();
     if (!rect) return;
@@ -115,7 +136,7 @@ export function GraphView({ nodes, edges, activeNodeId, onMove, onActivate, onCr
     if (connectMode) {
       if (!connectionSourceId) setConnectionSourceId(node.id);
       else if (connectionSourceId !== node.id) {
-        setEdgeForm({ source: connectionSourceId, target: node.id, relation: 'references', label: EDGE_LABELS.references });
+        setEdgeForm({ source: connectionSourceId, target: node.id, relation: 'related-to', label: EDGE_LABELS['related-to'] });
         setConnectionSourceId(null);
       }
       return;
@@ -158,14 +179,15 @@ export function GraphView({ nodes, edges, activeNodeId, onMove, onActivate, onCr
     } catch (error) { setActionError(error instanceof Error ? error.message : '关系删除失败'); }
   };
 
-  const filteredNodes = nodes.filter(node => node.title.toLowerCase().includes(query.toLowerCase()));
+  const normalizedQuery = query.trim().toLowerCase();
+  const filteredNodes = nodes.filter(node => !normalizedQuery || `${node.title}\n${node.summary}\n${node.anchorText || ''}`.toLowerCase().includes(normalizedQuery));
   const visibleIds = new Set(filteredNodes.map(node => node.id));
   const selectedEdge = edges.find(edge => edge.id === selectedEdgeId);
   const selectedNodeChildren = deleteTarget ? nodes.filter(node => node.sourceNodeId === deleteTarget.id) : [];
-  return <main className="workspace graph-view">
+  return <main id="workspace-main" tabIndex={-1} className="workspace graph-view">
     <header className="workspace-header graph-header"><div><span className="eyebrow">CONVERSATION GRAPH</span><h1>对话图谱</h1><p>{nodes.length} 个讨论节点 · {edges.length} 条语义关系 · 滚轮缩放，空白处拖拽画布</p></div><div className="graph-status-key"><span><i className="legend-current"/>当前讨论</span><span><i className="legend-active"/>进行中</span><span><i className="legend-resolved"/>已合并</span></div></header>
     <section className="graph-canvas" aria-label="讨论关系图" ref={canvasRef} onWheel={handleWheel} onPointerDown={pointerDownCanvas} onPointerMove={pointerMoveCanvas} onPointerUp={pointerUpCanvas}>
-      <div className="graph-search" data-no-pan="true"><Search size={15}/><input aria-label="搜索图谱" placeholder="在图谱中搜索" value={query} onChange={event => setQuery(event.target.value)} onPointerDown={event => event.stopPropagation()}/></div>
+      <div className="graph-search" data-no-pan="true"><Search size={15}/><input aria-label="搜索图谱" placeholder="搜索标题、摘要或来源锚点" value={query} onChange={event => setQuery(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && filteredNodes[0]) focusNode(filteredNodes[0]); }} onPointerDown={event => event.stopPropagation()}/><span>{filteredNodes.length}</span></div>
       <div className="graph-toolbar" data-no-pan="true">
         <button aria-label="新建图谱节点" title="新建节点" onClick={openNodeCreate}><Plus size={14}/>节点</button>
         <button className={connectMode ? 'active' : ''} aria-label="创建图谱关系" title="依次点击两个节点创建关系" onClick={() => { setConnectMode(current => !current); setConnectionSourceId(null); }}><Link2 size={14}/>{connectMode ? '选择节点' : '关系'}</button>
@@ -193,13 +215,14 @@ export function GraphView({ nodes, edges, activeNodeId, onMove, onActivate, onCr
         })}
       </div>
       {filteredNodes.length === 0 && <div className="graph-empty">没有匹配的讨论节点</div>}
-      <div className="graph-controls" data-no-pan="true"><button aria-label="缩小图谱" onClick={() => zoomAt(viewport.scale - .1)}><Minus size={16}/></button><span aria-label="当前缩放比例">{Math.round(viewport.scale * 100)}%</span><button aria-label="放大图谱" onClick={() => zoomAt(viewport.scale + .1)}><Plus size={16}/></button><button aria-label="重置画布" onClick={() => setViewport({ x: 0, y: 0, scale: 1 })}><RotateCcw size={15}/></button><button aria-label="聚焦当前节点" onClick={() => { const node = nodes.find(item => item.id === activeNodeId); if (node) focusNode(node); }}><Focus size={16}/></button></div>
+      <div className="graph-overview" data-no-pan="true" aria-label="图谱概览">{nodes.map(node => <i key={node.id} className={node.id === activeNodeId ? 'current' : ''} style={{ left: `${node.x / STAGE_WIDTH * 100}%`, top: `${node.y / STAGE_HEIGHT * 100}%` }}/>)}</div>
+      <div className="graph-controls" data-no-pan="true"><button aria-label="缩小图谱" onClick={() => zoomAt(viewport.scale - .1)}><Minus size={16}/></button><span aria-label="当前缩放比例">{Math.round(viewport.scale * 100)}%</span><button aria-label="放大图谱" onClick={() => zoomAt(viewport.scale + .1)}><Plus size={16}/></button><button aria-label="重置画布" onClick={() => setViewport({ x: 0, y: 0, scale: 1 })}><RotateCcw size={15}/></button><button aria-label="适合全部节点" onClick={() => fitNodes()}><Maximize2 size={15}/></button><button aria-label="聚焦当前节点" onClick={() => { const node = nodes.find(item => item.id === activeNodeId); if (node) focusNode(node); }}><Focus size={16}/></button></div>
       <div className="graph-hint"><span>{connectMode ? 'CONNECT' : 'PAN / ZOOM'}</span> {connectMode ? (connectionSourceId ? '再点击一个节点完成关系' : '点击第一个节点作为关系起点') : '拖动空白处平移 · 滚轮缩放 · 点击关系后删除'}</div>
       {actionError && <div className="graph-error" role="alert"><span>{actionError}</span><button aria-label="关闭图谱错误" onClick={() => setActionError('')}><X size={13}/></button></div>}
     </section>
 
     {nodeFormOpen && <div className="dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setNodeFormOpen(false); }}><form className="graph-dialog" aria-label="新建图谱节点" onSubmit={submitNode}><div className="graph-dialog-head"><div><span className="eyebrow">NEW NODE</span><h2>新建讨论节点</h2></div><button type="button" className="icon-button" aria-label="关闭新建节点" onClick={() => setNodeFormOpen(false)}><X size={16}/></button></div><label><span>节点标题</span><input autoFocus value={nodeForm.title} onChange={event => setNodeForm(current => ({ ...current, title: event.target.value }))} placeholder="例如：验证检索分层" maxLength={120}/></label><label><span>摘要（可选）</span><textarea value={nodeForm.summary} onChange={event => setNodeForm(current => ({ ...current, summary: event.target.value }))} placeholder="说明这个节点要探索的问题" maxLength={500}/></label><div className="dialog-actions"><button type="button" className="ghost-button" onClick={() => setNodeFormOpen(false)}>取消</button><button type="submit" className="primary-button" disabled={!nodeForm.title.trim()}><Check size={14}/>创建节点</button></div></form></div>}
-    {edgeForm && <div className="dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setEdgeForm(null); }}><form className="graph-dialog" aria-label="新建图谱关系" onSubmit={submitEdge}><div className="graph-dialog-head"><div><span className="eyebrow">NEW RELATION</span><h2>连接两个讨论节点</h2></div><button type="button" className="icon-button" aria-label="关闭新建关系" onClick={() => setEdgeForm(null)}><X size={16}/></button></div><p className="graph-dialog-note">{nodes.find(node => node.id === edgeForm.source)?.title} <span>→</span> {nodes.find(node => node.id === edgeForm.target)?.title}</p><label><span>关系类型</span><select value={edgeForm.relation} onChange={event => setEdgeForm(current => current ? { ...current, relation: event.target.value as EdgeRelation, label: EDGE_LABELS[event.target.value as EdgeRelation] } : current)}><option value="references">关联参考</option><option value="derived-from">衍生支线</option><option value="merged-into">选择性合并</option></select></label><label><span>关系标签</span><input value={edgeForm.label} onChange={event => setEdgeForm(current => current ? { ...current, label: event.target.value } : current)} maxLength={120}/></label><div className="dialog-actions"><button type="button" className="ghost-button" onClick={() => setEdgeForm(null)}>取消</button><button type="submit" className="primary-button" disabled={!edgeForm.label.trim()}><Link2 size={14}/>创建关系</button></div></form></div>}
+    {edgeForm && <div className="dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setEdgeForm(null); }}><form className="graph-dialog" aria-label="新建图谱关系" onSubmit={submitEdge}><div className="graph-dialog-head"><div><span className="eyebrow">NEW RELATION</span><h2>连接两个讨论节点</h2></div><button type="button" className="icon-button" aria-label="关闭新建关系" onClick={() => setEdgeForm(null)}><X size={16}/></button></div><p className="graph-dialog-note">{nodes.find(node => node.id === edgeForm.source)?.title} <span>→</span> {nodes.find(node => node.id === edgeForm.target)?.title}</p><label><span>关系类型</span><select value={edgeForm.relation} onChange={event => setEdgeForm(current => current ? { ...current, relation: event.target.value as EdgeRelation, label: EDGE_LABELS[event.target.value as EdgeRelation] } : current)}><option value="related-to">相关（RELATED_TO）</option><option value="references">引用（REFERENCES）</option><option value="derived-from">衍生支线</option><option value="merged-into">选择性合并</option></select></label><label><span>关系标签</span><input value={edgeForm.label} onChange={event => setEdgeForm(current => current ? { ...current, label: event.target.value } : current)} maxLength={120}/></label><div className="dialog-actions"><button type="button" className="ghost-button" onClick={() => setEdgeForm(null)}>取消</button><button type="submit" className="primary-button" disabled={!edgeForm.label.trim()}><Link2 size={14}/>创建关系</button></div></form></div>}
     {deleteTarget && <div className="dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setDeleteTarget(null); }}><div className="graph-dialog" role="alertdialog" aria-label="删除图谱节点"><div className="graph-dialog-head"><div><span className="eyebrow">DELETE NODE</span><h2>删除讨论节点？</h2></div><button type="button" className="icon-button" aria-label="关闭删除节点" onClick={() => setDeleteTarget(null)}><X size={16}/></button></div><p className="graph-dialog-note">“{deleteTarget.title}” 的消息和相关关系会一并移除。</p>{selectedNodeChildren.length > 0 && <p className="graph-dialog-warning">该节点还有 {selectedNodeChildren.length} 个子支线，请先删除子支线。</p>}<div className="dialog-actions"><button type="button" className="ghost-button" onClick={() => setDeleteTarget(null)}>取消</button><button type="button" className="danger-button" disabled={selectedNodeChildren.length > 0} onClick={() => void deleteNode()}><Trash2 size={14}/>确认删除</button></div></div></div>}
   </main>;
 }

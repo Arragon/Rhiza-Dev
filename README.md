@@ -44,7 +44,7 @@ AI_MODEL=qwen3:8b
 
 ### LibreChat 能力复用
 
-模型仍通过上面的当前 API 配置执行，不需要额外部署 LibreChat。项目固定使用 `librechat-data-provider@0.8.509`，复用 LibreChat 的 Model Spec 校验、endpoint 归一化和文件 MIME/大小策略；Agent Prompt 则沿用其角色化消息顺序，并保留 Rhiza 的 Context Manifest 语义。完整 Agent/MCP 和文件上传处理会在后续基础设施迁移中继续接入。
+模型仍通过上面的当前 API 配置执行，不需要额外部署 LibreChat。项目固定使用 `librechat-data-provider@0.8.509`，复用 LibreChat 的 Model Spec 校验、endpoint 归一化和文件 MIME/大小策略；Agent Prompt 则沿用其角色化消息顺序，并保留 Rhiza 的 Context Manifest 语义。M1 已接入受文件策略约束的上传、附件上下文和基础 Tool Call 展示；完整 Agent/MCP 执行将在后续里程碑继续接入。
 
 ### 生产式本地运行
 
@@ -58,8 +58,33 @@ npm start
 ## 验证
 
 ```bash
-npm test
-npm run build
+npm run verify:m3
+```
+
+如需验证 PostgreSQL migration baseline，先提供一个空测试库：
+
+```bash
+DATABASE_URL=postgresql://rhiza:rhiza@127.0.0.1:5432/rhiza_test npm run db:migrate
+DATABASE_URL=postgresql://rhiza:rhiza@127.0.0.1:5432/rhiza_test npm run db:status
+```
+
+迁移按文件名排序、逐个事务执行并记录 SHA-256 checksum；重复执行不会重复建表，已应用 SQL 被改写时会失败。运行时默认保留本地 JSON 兼容后端；设置 `DATABASE_URL` 并启用 `RHIZA_FEATURE_FLAGS=postgresPersistence=true,libreChatRuntime=false,fileContext=false` 后，会切换到带连接池、事务和审计记录的 PostgreSQL repository。可用 `RHIZA_PROJECT_ID` 指定要恢复的 Project UUID。
+
+第三方许可证报告可重复生成并核对：
+
+```bash
+npm run licenses:generate
+npm run licenses:verify
+```
+
+报告写入 `reports/third-party-licenses.json`，CI 会检查它是否与生产依赖锁文件一致。
+
+### Feature flags
+
+未完成功能默认关闭，可通过 `RHIZA_FEATURE_FLAGS` 显式开启已接线的实验边界。未知开关或非法值会让服务快速失败：
+
+```env
+RHIZA_FEATURE_FLAGS=postgresPersistence=false,libreChatRuntime=false,fileContext=false
 ```
 
 ## MVP 能力
@@ -74,6 +99,9 @@ npm run build
 - 可折叠的层级讨论节点树、活动路径导航、深层缩进压缩与路径聚焦
 - 关系图谱支持画布缩放/平移、节点拖拽，以及节点和语义关系的创建/删除
 - AI 输出支持 GFM Markdown、表格、任务列表、代码块、LaTeX/KaTeX 数学公式和 Mermaid 流程图
+- 流式生成可停止；失败请求可重试；支持重新生成以及保留历史的编辑并重发
+- 文件上传、附件上下文、生成参数、Reasoning、Tool Call 与 Token Usage 展示
+- 长对话按窗口加载，100 轮连续对话由自动化验收覆盖
 - Project State 事实、约束、决策和开放问题
 - 响应式桌面、窄屏与移动端布局
 - 集中式设计令牌，便于后续替换视觉风格

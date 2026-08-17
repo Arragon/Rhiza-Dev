@@ -8,7 +8,7 @@ const sections = [
 ];
 
 export function StateView() {
-  return <main className="workspace state-view"><header className="workspace-header"><div><span className="eyebrow">PROJECT STATE</span><h1>当前有效知识</h1><p>探索留在对话图谱；稳定结论沉淀在这里，并保留来源与版本。</p></div><button className="primary-button">+ 添加状态</button></header>
+  return <main id="workspace-main" className="workspace state-view"><header className="workspace-header"><div><span className="eyebrow">PROJECT STATE</span><h1>当前有效知识</h1><p>探索留在对话图谱；稳定结论沉淀在这里，并保留来源与版本。</p></div><button className="primary-button">+ 添加状态</button></header>
     <div className="state-summary"><div><strong>10</strong><span>有效状态项</span></div><div><strong>2</strong><span>开放问题</span></div><div><strong>1</strong><span>需要复核</span></div><div className="sync-status"><Clock3 size={15}/><span>最后更新于刚刚</span></div></div>
     <div className="state-grid">{sections.map(section => <section className={`state-card ${section.tone}`} key={section.title}><header><span><section.icon size={16}/>{section.title}</span><small>{section.items.length}</small></header>{section.items.map((item, index) => <article key={item}><div><strong>{item}</strong><p>来自「{index ? '研究框架' : '信息架构方向'}」· 第 {index + 2} 轮</p></div><button aria-label="查看来源"><ArrowUpRight size={15}/></button></article>)}</section>)}</div>
   </main>;

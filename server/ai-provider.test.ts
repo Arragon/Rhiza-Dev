@@ -31,7 +31,7 @@ describe('OpenAiCompatibleProvider', () => {
   it('fails clearly when no API key is configured', async () => {
     const provider = new OpenAiCompatibleProvider({ ...config, apiKey: '' });
     await expect(provider.complete({ prompt: 'test', mode: 'Strict', history: [], contextItems: [] }))
-      .rejects.toMatchObject<Partial<ProviderError>>({ code: 'PROVIDER_NOT_CONFIGURED', status: 503 });
+      .rejects.toMatchObject({ code: 'PROVIDER_NOT_CONFIGURED', status: 503 } satisfies Partial<ProviderError>);
   });
 
   it('normalizes OpenAI-compatible SSE chunks into text deltas', async () => {
@@ -48,7 +48,27 @@ describe('OpenAiCompatibleProvider', () => {
     }) as unknown as typeof fetch;
     const provider = new OpenAiCompatibleProvider(config, fetcher);
     const deltas: string[] = [];
-    for await (const delta of provider.stream({ prompt: '继续分析', mode: 'Assisted', history: [], contextItems: [] })) deltas.push(delta);
+    for await (const event of provider.stream({ prompt: '继续分析', mode: 'Assisted', history: [], contextItems: [] })) if (event.type === 'content') deltas.push(event.delta);
     expect(deltas).toEqual(['流式', '回答']);
+  });
+
+  it('normalizes reasoning, tool calls and token usage from provider SSE', async () => {
+    const fetcher = vi.fn(async () => new Response([
+      'data: {"choices":[{"delta":{"reasoning_content":"检查参数"}}]}', '',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call-1","function":{"name":"search","arguments":"{\\"q\\":"}}]}}]}', '',
+      'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\\"Rhiza\\"}"}}]}}]}', '',
+      'data: {"choices":[{"delta":{"content":"完成"}}],"usage":{"prompt_tokens":8,"completion_tokens":3,"total_tokens":11}}', '',
+      'data: [DONE]', '',
+    ].join('\n'), { status: 200, headers: { 'Content-Type': 'text/event-stream' } })) as unknown as typeof fetch;
+    const provider = new OpenAiCompatibleProvider(config, fetcher);
+    const events = [];
+    for await (const event of provider.stream({ prompt: '测试', mode: 'Assisted', history: [], contextItems: [] })) events.push(event);
+    expect(events).toEqual([
+      { type: 'reasoning', delta: '检查参数' },
+      { type: 'tool', toolCall: { id: 'tool-0', name: 'search', arguments: '{"q":' } },
+      { type: 'tool', toolCall: { id: 'tool-0', name: '', arguments: '"Rhiza"}' } },
+      { type: 'content', delta: '完成' },
+      { type: 'usage', usage: { promptTokens: 8, completionTokens: 3, totalTokens: 11 } },
+    ]);
   });
 });

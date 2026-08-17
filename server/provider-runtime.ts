@@ -32,11 +32,34 @@ export class ProviderRuntime implements AIRuntime {
     try {
       const completion = await this.providers.streamModel(request.modelId, request);
       let text = '';
-      for await (const delta of completion.stream) {
-        text += delta;
-        yield { type: 'CONTENT_DELTA' as const, requestId: request.requestId, delta };
+      let reasoning = '';
+      let usage;
+      const tools = new Map<string, { id: string; name: string; arguments: string }>();
+      for await (const event of completion.stream) {
+        if (event.type === 'content') {
+          text += event.delta;
+          yield { type: 'CONTENT_DELTA' as const, requestId: request.requestId, delta: event.delta };
+        } else if (event.type === 'reasoning') {
+          reasoning += event.delta;
+          yield { type: 'REASONING_DELTA' as const, requestId: request.requestId, delta: event.delta };
+        } else if (event.type === 'tool') {
+          const current = tools.get(event.toolCall.id) || { id: event.toolCall.id, name: '', arguments: '' };
+          const toolCall = { id: current.id, name: current.name + event.toolCall.name, arguments: current.arguments + event.toolCall.arguments };
+          tools.set(toolCall.id, toolCall);
+          yield { type: 'TOOL_CALL_DELTA' as const, requestId: request.requestId, toolCall };
+        } else {
+          usage = event.usage;
+          yield { type: 'USAGE' as const, requestId: request.requestId, usage };
+        }
       }
-      yield { type: 'RUN_END' as const, requestId: request.requestId, text, model: completion.model, provider: completion.provider };
+      usage ||= {
+        promptTokens: Math.ceil((request.prompt.length + request.history.reduce((sum, message) => sum + message.text.length, 0)) / 4),
+        completionTokens: Math.ceil((text.length + reasoning.length) / 4),
+        totalTokens: 0,
+        estimated: true,
+      };
+      usage.totalTokens ||= usage.promptTokens + usage.completionTokens;
+      yield { type: 'RUN_END' as const, requestId: request.requestId, text, model: completion.model, provider: completion.provider, reasoning: reasoning || undefined, toolCalls: tools.size ? [...tools.values()] : undefined, usage };
     } catch (error) {
       const providerError = error instanceof ProviderError ? error : new ProviderError(error instanceof Error ? error.message : 'AI Runtime 执行失败。');
       yield { type: 'RUN_ERROR' as const, requestId: request.requestId, code: providerError.code, message: providerError.message, status: providerError.status };

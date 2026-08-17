@@ -19,7 +19,7 @@ function parseExtraHeaders(value: string | undefined): Record<string, string> {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('must be an object');
     return Object.fromEntries(Object.entries(parsed).map(([key, headerValue]) => [key, String(headerValue)]));
   } catch (error) {
-    throw new Error(`AI_EXTRA_HEADERS must be valid JSON: ${error instanceof Error ? error.message : 'invalid value'}`);
+    throw new Error(`AI_EXTRA_HEADERS must be valid JSON: ${error instanceof Error ? error.message : 'invalid value'}`, { cause: error });
   }
 }
 

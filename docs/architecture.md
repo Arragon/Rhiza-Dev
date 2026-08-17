@@ -13,7 +13,8 @@
 - Express：Workspace、Context 与 Chat API
 - OpenAI-compatible Provider：第三方模型适配、超时和错误归一化
 - librechat-data-provider：LibreChat Model Spec、endpoint 枚举与文件能力策略
-- JSON 原子存储：本地持久化消息、Context 状态与 Manifest
+- JSON 原子存储：M0 默认本地持久化消息、Context 状态与 Manifest
+- PostgreSQL migration baseline：事务迁移、checksum 防篡改和 CI 真库验证；运行时切换留给 M2
 - Lucide React：统一图标系统
 - react-markdown / remark-gfm：Markdown 与 GitHub Flavored Markdown
 - remark-math / rehype-katex / Mermaid：数学公式、LaTeX 和流程图渲染
@@ -37,6 +38,10 @@
 - `server/secret-vault.ts`：API Key AES-256-GCM 加密与解密
 - `server/store.ts`：串行更新和临时文件原子替换
 - `server/config.ts`：安全读取 Provider 环境配置
+- `server/feature-flags.ts`：默认关闭、未知值快速失败的 M0 功能开关
+- `db/migrations/`、`scripts/migrate.ts`：Rhiza 自有 PostgreSQL schema 与迁移器
+- `e2e/`：跨真实 HTTP socket 的 Provider streaming 测试及 CI PostgreSQL 真库测试
+- `.github/workflows/ci.yml`：lint、typecheck、unit、E2E、license 和 build 门禁
 - `var/data/workspace.json`：运行时持久化文件，不提交 Git
 - `var/data/providers.json`：加密供应商配置、模型收藏与置顶状态
 - `src/test/`：测试环境初始化
@@ -90,8 +95,12 @@ Express 后端暴露以下边界：
 
 ## 8. Testing Strategy
 
-- `npm test`：验证前端 API 接线、Context 持久化、输入校验、Provider 请求格式、未配置错误与 Manifest 写入。
-- `npm run build`：执行 TypeScript 严格检查、Vite 前端构建和 tsup 服务端构建。
+- `npm run lint`：覆盖前端、服务端、迁移和 E2E 的静态规则。
+- `npm run typecheck`：同时严格检查浏览器与 Node 项目；服务端不再只依赖打包器转译。
+- `npm run test:unit`：验证前端 API 接线、Context 持久化、输入校验、Provider 请求格式、架构边界和 Manifest 写入。
+- `npm run test:e2e`：通过真实 HTTP socket 验证 provider request + SSE，并用嵌入式 PostgreSQL 引擎验证 schema 正反向迁移；CI 额外对 PostgreSQL 17 真服务创建 schema 并验证迁移幂等性。
+- `npm run licenses:verify`：确保提交的生产依赖许可证报告可重复生成。
+- `npm run build`：执行全量 TypeScript 严格检查、Vite 前端构建和 tsup 服务端构建。
 - 浏览器人工验证：检查三栏布局、移动断点、滚动、抽屉、Graph 缩放/平移、节点/关系编辑和关键交互。
 - Graph 组件与 API 测试：验证缩放、节点创建/删除、关系创建/删除及后端持久化。
 - Markdown 组件测试：验证 GFM 表格/任务列表、KaTeX 公式和 Mermaid SVG 输出。
@@ -107,8 +116,8 @@ Express 后端暴露以下边界：
 
 - AI 回复已连接真实 Provider；Context Planner 推荐与冲突检测仍为演示数据。
 - Graph 已支持缩放、平移、节点拖拽、节点/关系编辑与坐标持久化；框选、自动布局和超大图虚拟化仍未实现。
-- 当前使用本机 JSON 存储，不支持多用户并发、身份认证、权限和跨项目隔离。
-- 已 fetch 并验证技术设计书指定 LibreChat v0.8.7 tag，`librechat-v0.8.7` 分支固定指向 commit `9e74cc0e...`，Rhiza 集成工作位于 `codex/rhiza-librechat-runtime`。当前 Provider/API Key 仍是唯一模型执行配置；已接入 `librechat-data-provider@0.8.509` 的 Model Spec 和文件策略。完整 Agent 包要求 Node.js 24，而当前环境为 Node.js 22，因此 Agent/MCP、实际文件上传与解析、PostgreSQL、统一 Auth、License Gate 和 SBOM 属于后续工作。
+- 当前运行时默认使用本机 JSON 存储，不支持多用户并发、身份认证、权限和跨项目隔离；PostgreSQL schema/migration baseline 已完成，产品数据存储切换属于 M2。
+- 已 fetch 并验证技术设计书指定 LibreChat v0.8.7 tag，`librechat-v0.8.7` 分支固定指向 commit `9e74cc0e...`，Rhiza 集成工作位于 `codex/rhiza-librechat-runtime`。当前 Provider/API Key 仍是唯一模型执行配置；已接入固定的 `librechat-data-provider@0.8.509` Model Spec 和文件策略。完整 Agent/MCP、实际文件上传与解析、运行时 PostgreSQL Repository、统一 Auth 与 SBOM 属于后续里程碑；M0 已具备许可证报告及 PostgreSQL migration 基线。
 - Provider 适配范围是 OpenAI-compatible Chat Completions；非兼容协议需要新增 Adapter。
 - 模型自动发现要求供应商实现 OpenAI-compatible `/models`；不支持时可手动添加模型 ID。
 - 临时支线不跨刷新恢复，这是当前“未保留即丢弃”的明确产品语义；正式支线与 Graph 布局已持久化，Project State 编辑仍未接入持久化 API。

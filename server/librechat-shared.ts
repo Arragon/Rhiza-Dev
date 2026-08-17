@@ -5,7 +5,7 @@ import {
   mergeFileConfig,
   tModelSpecSchema,
 } from 'librechat-data-provider';
-import type { ContextItem, StoredMessage } from './domain';
+import type { ContextItem, StoredAttachment, StoredMessage } from './domain';
 import type { ModelRecord, ProviderPreset, StoredProvider } from './provider-domain';
 
 export interface AgentMessage {
@@ -18,6 +18,7 @@ export interface AgentMessageInput {
   history: StoredMessage[];
   contextItems: ContextItem[];
   mode: string;
+  attachments?: StoredAttachment[];
 }
 
 export function libreChatEndpointForPreset(preset: ProviderPreset): EModelEndpoint {
@@ -60,7 +61,7 @@ export function libreChatFilePolicy(endpoint = EModelEndpoint.custom) {
 
 function buildSystemPrompt(contextItems: ContextItem[], mode: string): string {
   const context = contextItems.length
-    ? contextItems.map(item => `- [${item.role}] ${item.title}: ${item.detail}`).join('\n')
+    ? contextItems.map(item => `- [${item.role}] ${item.title}: ${item.detail}${item.content ? `\n  投影内容：${item.content}` : ''}`).join('\n')
     : '- 没有附加项目上下文';
   return [
     '你是根系（Rhiza）中的项目协作 AI。回答应准确、结构清晰，并明确区分事实、约束、假设与建议。',
@@ -76,9 +77,12 @@ function buildSystemPrompt(contextItems: ContextItem[], mode: string): string {
  * message formatting: system prompt, bounded history, then the current user turn.
  */
 export function buildLibreChatAgentMessages(input: AgentMessageInput): AgentMessage[] {
+  const attachments = input.attachments?.length
+    ? `\n\n本轮附件：\n${input.attachments.map(file => `--- ${file.name} (${file.mimeType}, ${file.size} bytes) ---\n${file.extractedText || '[二进制附件：仅提供元数据]'}`).join('\n')}`
+    : '';
   return [
     { role: 'system', content: buildSystemPrompt(input.contextItems, input.mode) },
     ...input.history.slice(-20).map(message => ({ role: message.kind, content: message.text })),
-    { role: 'user', content: input.prompt },
+    { role: 'user', content: `${input.prompt}${attachments}` },
   ];
 }

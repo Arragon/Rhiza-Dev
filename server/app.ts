@@ -1,22 +1,40 @@
 import express from 'express';
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { ProviderError } from './ai-provider';
 import { collectRuntimeResult, RuntimeExecutionError, type AIRuntime, type ModelInfo, type RuntimeRequest, type RuntimeResult } from './ai-runtime';
-import type { ContextManifest, ContextMode, ContextStatus, StoredMessage } from './domain';
+import type { ChatOperation, ContextItem, ContextManifest, ContextMode, ContextStatus, GenerationOptions, StoredMessage, WorkspaceData } from './domain';
+import { attachmentContextItem, chunkText, estimateTokens, extractPdfText, planContext, summarizeChunks } from './context-planner';
+import { loadFeatureFlags, type FeatureFlags } from './feature-flags';
 import { providerPresets, type ProviderService } from './provider-service';
 import { ProviderRuntime } from './provider-runtime';
-import type { WorkspaceStore } from './store';
+import type { WorkspaceRepository } from './store';
 
 const contextStatuses = new Set<ContextStatus>(['active', 'recommended', 'excluded']);
 const contextModes = new Set<ContextMode>(['Auto', 'Assisted', 'Strict']);
-const edgeRelations = new Set(['derived-from', 'references', 'merged-into']);
+const edgeRelations = new Set(['derived-from', 'references', 'related-to', 'merged-into']);
+const chatOperations = new Set<ChatOperation>(['send', 'retry', 'regenerate', 'edit-resend']);
+const textMimeTypes = new Set(['text/plain', 'text/markdown', 'text/csv', 'application/json', 'application/xml', 'text/xml', 'application/javascript', 'text/javascript']);
+export const CONTEXT_TOKEN_BUDGET = 32_000;
 
-export function createApp(store: WorkspaceStore, provider: ProviderService, serveFrontend = false, runtime: AIRuntime = new ProviderRuntime(provider)) {
+interface DraftMessageInput {
+  kind: 'user' | 'assistant';
+  text: string;
+  createdAt?: string;
+}
+
+function isDraftMessage(value: unknown): value is DraftMessageInput {
+  if (!value || typeof value !== 'object') return false;
+  const message = value as Partial<DraftMessageInput>;
+  return Boolean(message.kind && ['user', 'assistant'].includes(message.kind) && typeof message.text === 'string' && message.text.trim() && message.text.length <= 20_000);
+}
+
+export function createApp(store: WorkspaceRepository, provider: ProviderService, serveFrontend = false, runtime: AIRuntime = new ProviderRuntime(provider), featureFlags: FeatureFlags = loadFeatureFlags(), uploadDirectory = resolve('var/uploads')) {
   const app = express();
   app.disable('x-powered-by');
-  app.use(express.json({ limit: '256kb' }));
+  app.use(express.json({ limit: '32mb' }));
 
   const activeRuntimeModel = async (): Promise<ModelInfo> => {
     const model = (await runtime.listModels()).find(item => item.active);
@@ -30,15 +48,78 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
     return { configured: true, name: model.provider, model: model.displayName, baseUrl: '' };
   };
 
-  const prepareChatRun = async (prompt: string): Promise<{ manifest: ContextManifest; request: RuntimeRequest; createdAt: string }> => {
+  const sourceContextItem = (workspace: WorkspaceData, sourceType: 'node' | 'segment' | 'file', sourceId: string, status: ContextStatus = 'active'): ContextItem => {
+    if (sourceType === 'file') {
+      const attachment = workspace.attachments.find(item => item.id === sourceId);
+      if (!attachment) throw new ProviderError('Context 来源文件不存在。', 404, 'CONTEXT_SOURCE_NOT_FOUND');
+      return { ...attachmentContextItem(attachment), status };
+    }
+    if (sourceType === 'node') {
+      const node = workspace.discussionNodes.find(item => item.id === sourceId);
+      if (!node) throw new ProviderError('Context 来源节点不存在。', 404, 'CONTEXT_SOURCE_NOT_FOUND');
+      const body = workspace.messages.filter(message => message.nodeId === node.id).map(message => message.text).join('\n');
+      return { id: randomUUID(), title: node.title, detail: `讨论节点 · ${node.summary}`, role: 'Reference', status, tokens: estimateTokens(`${node.summary}\n${body}`), selectionMode: 'USER_SELECTED', sourceType, sourceId: node.id, sourceNodeId: node.id, pinned: false, contentVersion: 1, reason: '由用户显式加入的讨论节点。' };
+    }
+    const segment = workspace.segments.find(item => item.id === sourceId);
+    if (!segment) throw new ProviderError('Context 来源片段不存在。', 404, 'CONTEXT_SOURCE_NOT_FOUND');
+    const node = workspace.discussionNodes.find(item => item.id === segment.nodeId);
+    const body = workspace.messages.filter(message => message.segmentId === segment.id).map(message => message.text).join('\n');
+    return { id: randomUUID(), title: segment.title, detail: `片段 · 来自 ${node?.title || '未知节点'}`, role: 'Reference', status, tokens: estimateTokens(body || segment.title), selectionMode: 'USER_SELECTED', sourceType, sourceId: segment.id, sourceNodeId: segment.nodeId, pinned: false, contentVersion: 1, reason: '由用户显式加入的讨论片段。' };
+  };
+
+  const withCurrentNodeContext = (workspace: WorkspaceData, nodeId: string): WorkspaceData => {
+    const existing = workspace.contextItems.find(item => item.sourceType === 'node' && item.sourceId === nodeId);
+    const contextItems = workspace.contextItems.map(item => item.selectionMode === 'CURRENT' && item.sourceId !== nodeId
+      ? { ...item, selectionMode: 'USER_SELECTED' as const, status: item.pinned ? item.status : 'recommended' as const, reason: item.pinned ? item.reason : '已离开该节点，可按需重新加入。' }
+      : item);
+    if (existing) return { ...workspace, contextItems: contextItems.map(item => item.id === existing.id ? { ...item, status: 'active' as const, selectionMode: 'CURRENT' as const, reason: '当前讨论节点始终进入本轮上下文。' } : item) };
+    const item = sourceContextItem(workspace, 'node', nodeId);
+    return { ...workspace, contextItems: [...contextItems, { ...item, selectionMode: 'CURRENT', reason: '当前讨论节点始终进入本轮上下文。' }] };
+  };
+
+  const prepareChatRun = async (input: { prompt: string; operation: ChatOperation; sourceMessageId?: string; attachmentIds: string[]; generation: GenerationOptions }): Promise<{ manifest: ContextManifest; request: RuntimeRequest; createdAt: string; userMessageId: string; versionGroupId: string; version: number }> => {
     const current = await store.read();
-    const activeContext = current.contextItems.filter(item => item.status === 'active');
     const activeNodeId = current.activeNodeId;
-    if (!current.discussionNodes.some(node => node.id === activeNodeId)) throw new ProviderError('当前讨论节点不存在。', 404, 'NODE_NOT_FOUND');
+    const activeNode = current.discussionNodes.find(node => node.id === activeNodeId);
+    if (!activeNode) throw new ProviderError('当前讨论节点不存在。', 404, 'NODE_NOT_FOUND');
+    let planner;
+    try {
+      planner = planContext(current, input.prompt, input.attachmentIds, CONTEXT_TOKEN_BUDGET);
+    } catch (error) {
+      console.error('[planner] degraded to explicit context', error instanceof Error ? error.message : error);
+      const items = current.contextItems.filter(item => item.status === 'active');
+      planner = { items, diagnostics: { candidateCount: 0, selectedCount: items.length, elapsedMs: 0, fallback: true, budget: CONTEXT_TOKEN_BUDGET, usedTokens: items.reduce((sum, item) => sum + item.tokens, 0) } };
+    }
+    const activeContext = planner.items;
+    if (activeNode.status === 'archived') throw new ProviderError('归档节点为只读，请先恢复后再继续讨论。', 409, 'NODE_ARCHIVED');
     const createdAt = new Date().toISOString();
     const manifestId = randomUUID();
     const requestId = randomUUID();
+    const userMessageId = randomUUID();
     const model = await activeRuntimeModel();
+    const source = input.sourceMessageId ? current.messages.find(message => message.id === input.sourceMessageId && message.nodeId === activeNodeId) : undefined;
+    if (input.sourceMessageId && !source) throw new ProviderError('版本来源消息不存在或不属于当前讨论。', 400, 'INVALID_MESSAGE_SOURCE');
+    if (input.operation === 'edit-resend' && source?.kind !== 'user') throw new ProviderError('Edit & Resend 的来源必须是用户消息。', 400, 'INVALID_EDIT_SOURCE');
+    if (input.operation === 'regenerate' && source?.kind !== 'assistant') throw new ProviderError('Regenerate 的来源必须是 AI 消息。', 400, 'INVALID_REGENERATE_SOURCE');
+    let prompt = input.prompt;
+    let history = current.messages.filter(message => message.nodeId === activeNodeId);
+    let versionSource = source;
+    if (input.operation === 'regenerate' && source) {
+      const sourceIndex = history.findIndex(message => message.id === source.id);
+      const priorUser = source.replyToMessageId
+        ? history.find(message => message.id === source.replyToMessageId)
+        : [...history.slice(0, sourceIndex)].reverse().find(message => message.kind === 'user');
+      if (!priorUser) throw new ProviderError('无法找到 Regenerate 对应的用户消息。', 409, 'REGENERATE_PROMPT_MISSING');
+      prompt = priorUser.text;
+      versionSource = priorUser;
+      history = history.slice(0, history.findIndex(message => message.id === priorUser.id));
+    } else if (input.operation === 'edit-resend' && source) {
+      history = history.slice(0, history.findIndex(message => message.id === source.id));
+    }
+    const versionGroupId = versionSource?.versionGroupId || versionSource?.id || userMessageId;
+    const version = Math.max(0, ...current.messages.filter(message => message.versionGroupId === versionGroupId).map(message => message.version || 1)) + (versionSource ? 1 : 1);
+    const attachments = input.attachmentIds.map(id => current.attachments.find(item => item.id === id));
+    if (attachments.some(item => !item)) throw new ProviderError('存在无效附件，请重新选择文件。', 400, 'ATTACHMENT_NOT_FOUND');
     const manifest: ContextManifest = {
       id: manifestId,
       projectId: current.projectId,
@@ -49,24 +130,39 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
       model: model.model,
       provider: model.provider,
       runtime: runtime.kind || 'provider-adapter',
-      contextItemIds: activeContext.map(item => item.id),
+      contextItemIds: current.contextItems.filter(item => item.status === 'active').map(item => item.id),
       excludedItemIds: current.contextItems.filter(item => item.status === 'excluded').map(item => item.id),
-      contextItems: activeContext.map(item => ({ sourceType: 'context-item', sourceId: item.id, role: item.role, selectionMode: item.selectionMode || 'CURRENT', tokenCount: item.tokens, contentVersion: 1 })),
+      contextItems: activeContext.map(item => ({
+        sourceType: item.sourceType || 'reference', sourceId: item.sourceId || item.id, sourceNodeId: item.sourceNodeId,
+        title: item.title, detail: item.detail, role: item.role, selectionMode: item.selectionMode || 'CURRENT',
+        pinned: Boolean(item.pinned), reason: item.reason || (item.selectionMode === 'CURRENT' ? '当前讨论节点。' : '已加入 Active Context。'),
+        tokenCount: item.tokens, contentVersion: item.contentVersion || 1,
+      })),
       estimatedTokens: activeContext.reduce((sum, item) => sum + item.tokens, 0),
+      generation: input.generation,
+      operation: input.operation,
+      sourceMessageId: input.sourceMessageId,
+      attachmentIds: input.attachmentIds,
+      planner: planner.diagnostics,
     };
     return {
       manifest,
       createdAt,
+      userMessageId,
+      versionGroupId,
+      version,
       request: {
         requestId, manifestId, projectId: current.projectId, nodeId: activeNodeId, modelId: model.id,
-        prompt, history: current.messages.filter(message => message.nodeId === activeNodeId), contextItems: activeContext, mode: current.mode,
+        prompt, history, contextItems: activeContext, mode: current.mode, attachments: attachments.filter((item): item is NonNullable<typeof item> => Boolean(item)), generation: input.generation,
+        operation: input.operation, sourceMessageId: input.sourceMessageId,
       },
     };
   };
 
-  const commitChatRun = async (run: { manifest: ContextManifest; request: RuntimeRequest; createdAt: string }, completion: RuntimeResult) => {
-    const userMessage: StoredMessage = { id: randomUUID(), nodeId: run.request.nodeId, kind: 'user', text: run.request.prompt, createdAt: run.createdAt };
-    const assistantMessage: StoredMessage = { id: randomUUID(), nodeId: run.request.nodeId, kind: 'assistant', text: completion.text, createdAt: run.createdAt, manifestId: run.manifest.id };
+  const commitChatRun = async (run: { manifest: ContextManifest; request: RuntimeRequest; createdAt: string; userMessageId: string; versionGroupId: string; version: number }, completion: RuntimeResult) => {
+    const operation = run.request.operation || 'send';
+    const userMessage: StoredMessage = { id: run.userMessageId, nodeId: run.request.nodeId, kind: 'user', text: run.request.prompt, createdAt: run.createdAt, attachmentIds: run.manifest.attachmentIds, operation, sourceMessageId: run.request.sourceMessageId, versionGroupId: run.versionGroupId, version: run.version };
+    const assistantMessage: StoredMessage = { id: randomUUID(), nodeId: run.request.nodeId, kind: 'assistant', text: completion.text, createdAt: run.createdAt, manifestId: run.manifest.id, operation, sourceMessageId: operation === 'regenerate' ? run.request.sourceMessageId : undefined, versionGroupId: run.versionGroupId, version: run.version, replyToMessageId: userMessage.id, usage: completion.usage, reasoning: completion.reasoning, toolCalls: completion.toolCalls };
     await store.update(latest => {
       if (latest.manifests.some(manifest => manifest.requestId === run.request.requestId)) return latest;
       if (!latest.discussionNodes.some(node => node.id === run.request.nodeId)) throw new ProviderError('生成期间讨论节点已被删除，结果未写入。', 409, 'NODE_REMOVED_DURING_RUN');
@@ -77,6 +173,23 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
 
   const writeSse = (response: express.Response, event: string, payload: unknown) => {
     response.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+  };
+
+  const parseChatInput = (body: unknown) => {
+    const input = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+    const prompt = typeof input.message === 'string' ? input.message.trim() : '';
+    const operation = chatOperations.has(input.operation as ChatOperation) ? input.operation as ChatOperation : 'send';
+    const sourceMessageId = typeof input.sourceMessageId === 'string' ? input.sourceMessageId : undefined;
+    const attachmentIds = Array.isArray(input.attachmentIds) ? [...new Set(input.attachmentIds.filter((id): id is string => typeof id === 'string'))].slice(0, 10) : [];
+    const rawGeneration = input.generation && typeof input.generation === 'object' ? input.generation as Partial<GenerationOptions> : {};
+    const generation = {
+      temperature: Number(rawGeneration.temperature ?? 0.4),
+      topP: Number(rawGeneration.topP ?? 1),
+      maxTokens: Number(rawGeneration.maxTokens ?? 2048),
+    };
+    if (!prompt || prompt.length > 20_000) throw new ProviderError('消息不能为空且不能超过 20,000 字符。', 400, 'INVALID_MESSAGE');
+    if (!Number.isFinite(generation.temperature) || generation.temperature < 0 || generation.temperature > 2 || !Number.isFinite(generation.topP) || generation.topP <= 0 || generation.topP > 1 || !Number.isInteger(generation.maxTokens) || generation.maxTokens < 1 || generation.maxTokens > 32_768) throw new ProviderError('生成参数超出允许范围。', 400, 'INVALID_GENERATION_OPTIONS');
+    return { prompt, operation, sourceMessageId, attachmentIds, generation };
   };
 
   app.use((request, response, next) => {
@@ -90,7 +203,7 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
   });
 
   app.get('/api/health', async (_request, response, next) => {
-    try { response.json({ ok: true, provider: await activeRuntimeStatus(), runtime: runtime.kind || 'provider-adapter' }); } catch (error) { next(error); }
+    try { response.json({ ok: true, provider: await activeRuntimeStatus(), runtime: runtime.kind || 'provider-adapter', featureFlags }); } catch (error) { next(error); }
   });
 
   app.get('/api/workspace', async (_request, response, next) => {
@@ -103,6 +216,30 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
 
   app.post('/api/providers', async (request, response, next) => {
     try { response.status(201).json({ catalog: await provider.saveProvider(request.body) }); } catch (error) { next(error); }
+  });
+
+  app.post('/api/attachments', async (request, response, next) => {
+    try {
+      const name = typeof request.body?.name === 'string' ? request.body.name.trim().slice(0, 240) : '';
+      const mimeType = typeof request.body?.mimeType === 'string' ? request.body.mimeType.toLowerCase().slice(0, 120) : 'application/octet-stream';
+      const encoded = typeof request.body?.dataBase64 === 'string' ? request.body.dataBase64 : '';
+      if (!name || !encoded || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) return response.status(400).json({ error: { code: 'INVALID_ATTACHMENT', message: '附件名称或内容无效。' } });
+      const filePolicy = (await provider.snapshot()).filePolicy;
+      const bytes = Buffer.from(encoded, 'base64');
+      if (!bytes.length || bytes.length > filePolicy.maxFileSizeBytes) return response.status(413).json({ error: { code: 'ATTACHMENT_TOO_LARGE', message: `附件大小必须在 1 字节到 ${filePolicy.maxFileSizeBytes} 字节之间。` } });
+      if (filePolicy.supportedMimeTypes.length && !filePolicy.supportedMimeTypes.includes(mimeType)) return response.status(415).json({ error: { code: 'UNSUPPORTED_ATTACHMENT', message: `当前模型不支持 ${mimeType}。` } });
+      const id = randomUUID();
+      await mkdir(uploadDirectory, { recursive: true });
+      await writeFile(resolve(uploadDirectory, id), bytes);
+      const indexable = textMimeTypes.has(mimeType) || mimeType.startsWith('text/') || mimeType === 'application/pdf';
+      const extracted = mimeType === 'application/pdf' ? extractPdfText(bytes) : indexable ? bytes.toString('utf8') : '';
+      const chunks = extracted ? chunkText(id, extracted) : [];
+      const summary = summarizeChunks(name, chunks);
+      const attachment = { id, name, mimeType, size: bytes.length, kind: mimeType.startsWith('image/') ? 'image' as const : 'file' as const, summary, chunkCount: chunks.length, ...(extracted && bytes.length <= 100_000 ? { extractedText: extracted } : {}), createdAt: new Date().toISOString() };
+      await store.update(current => ({ ...current, attachments: [...current.attachments, attachment], fileChunks: [...current.fileChunks, ...chunks] }));
+      const safeAttachment = { id: attachment.id, name: attachment.name, mimeType: attachment.mimeType, size: attachment.size, kind: attachment.kind, summary: attachment.summary, chunkCount: attachment.chunkCount, createdAt: attachment.createdAt };
+      response.status(201).json({ attachment: safeAttachment });
+    } catch (error) { next(error); }
   });
 
   app.put('/api/providers/:id', async (request, response, next) => {
@@ -132,19 +269,40 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
 
   app.patch('/api/workspace/context/:id', async (request, response, next) => {
     try {
-      const status = request.body?.status as ContextStatus;
-      if (!contextStatuses.has(status)) return response.status(400).json({ error: { code: 'INVALID_STATUS', message: '无效的 Context 状态。' } });
+      const status = request.body?.status as ContextStatus | undefined;
+      const pinned = request.body?.pinned as boolean | undefined;
+      if (status !== undefined && !contextStatuses.has(status)) return response.status(400).json({ error: { code: 'INVALID_STATUS', message: '无效的 Context 状态。' } });
+      if (pinned !== undefined && typeof pinned !== 'boolean') return response.status(400).json({ error: { code: 'INVALID_PIN', message: '无效的 Pin 状态。' } });
+      if (status === undefined && pinned === undefined) return response.status(400).json({ error: { code: 'EMPTY_CONTEXT_UPDATE', message: '没有可更新的 Context 字段。' } });
       let found = false;
       const workspace = await store.update(current => ({
         ...current,
         contextItems: current.contextItems.map(item => {
           if (item.id !== request.params.id) return item;
           found = true;
-          return { ...item, status, ...(item.status === 'recommended' && status === 'active' ? { selectionMode: 'AI_RECOMMENDED_ACCEPTED' as const } : {}) };
+          const nextStatus = status || (pinned ? 'active' : item.status);
+          return { ...item, status: nextStatus, pinned: pinned ?? item.pinned,
+            ...(item.status === 'recommended' && status === 'active' ? { selectionMode: 'AI_RECOMMENDED_ACCEPTED' as const } : {}),
+            ...(status === 'excluded' ? { pinned: false, reason: '用户显式排除，本轮不会发送给模型。' } : {}),
+          };
         }),
       }));
       if (!found) return response.status(404).json({ error: { code: 'CONTEXT_NOT_FOUND', message: 'Context 条目不存在。' } });
       response.json({ workspace });
+    } catch (error) { next(error); }
+  });
+
+  app.post('/api/workspace/context', async (request, response, next) => {
+    try {
+      const sourceType = request.body?.sourceType as 'node' | 'segment' | 'file';
+      const sourceId = typeof request.body?.sourceId === 'string' ? request.body.sourceId : '';
+      if (!['node', 'segment', 'file'].includes(sourceType) || !sourceId) return response.status(400).json({ error: { code: 'INVALID_CONTEXT_SOURCE', message: '请选择有效的 Node、Segment 或 File。' } });
+      const workspace = await store.update(current => {
+        const existing = current.contextItems.find(item => item.sourceType === sourceType && item.sourceId === sourceId);
+        if (existing) return { ...current, contextItems: current.contextItems.map(item => item.id === existing.id ? { ...item, status: 'active' as const, selectionMode: 'USER_SELECTED' as const, reason: '由用户显式加入。' } : item) };
+        return { ...current, contextItems: [...current.contextItems, sourceContextItem(current, sourceType, sourceId)] };
+      });
+      response.status(201).json({ workspace });
     } catch (error) { next(error); }
   });
 
@@ -153,19 +311,31 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
       const title = typeof request.body?.title === 'string' ? request.body.title.trim() : '';
       const anchorText = typeof request.body?.anchorText === 'string' ? request.body.anchorText.trim().slice(0, 2000) : '';
       const sourceMessageId = typeof request.body?.sourceMessageId === 'string' ? request.body.sourceMessageId : undefined;
-      const draftMessages = Array.isArray(request.body?.messages) ? request.body.messages.slice(0, 40) : [];
+      const requestedStart = Number.isInteger(request.body?.anchorStart) ? Number(request.body.anchorStart) : undefined;
+      const requestedEnd = Number.isInteger(request.body?.anchorEnd) ? Number(request.body.anchorEnd) : undefined;
+      const draftMessages: unknown[] = Array.isArray(request.body?.messages) ? request.body.messages.slice(0, 40) : [];
       if (!title || title.length > 120) return response.status(400).json({ error: { code: 'INVALID_NODE_TITLE', message: '支线标题不能为空且不能超过 120 字符。' } });
-      if (draftMessages.some(message => !message || !['user', 'assistant'].includes(message.kind) || typeof message.text !== 'string' || !message.text.trim() || message.text.length > 20_000)) return response.status(400).json({ error: { code: 'INVALID_BRANCH_MESSAGES', message: '临时支线消息格式无效。' } });
+      if (!draftMessages.every(isDraftMessage)) return response.status(400).json({ error: { code: 'INVALID_BRANCH_MESSAGES', message: '临时支线消息格式无效。' } });
       const workspace = await store.update(current => {
         const source = current.discussionNodes.find(node => node.id === current.activeNodeId);
         if (!source) throw new ProviderError('当前讨论节点不存在。', 404, 'NODE_NOT_FOUND');
-        if (sourceMessageId && !current.messages.some(message => message.id === sourceMessageId && message.nodeId === source.id)) throw new ProviderError('支线来源消息不属于当前讨论。', 400, 'INVALID_BRANCH_SOURCE');
+        const sourceMessage = sourceMessageId ? current.messages.find(message => message.id === sourceMessageId && message.nodeId === source.id) : undefined;
+        if (sourceMessageId && !sourceMessage) throw new ProviderError('支线来源消息不属于当前讨论。', 400, 'INVALID_BRANCH_SOURCE');
+        let startOffset: number | undefined;
+        let endOffset: number | undefined;
+        if (sourceMessage && anchorText) {
+          const exactOffsets = requestedStart !== undefined && requestedEnd !== undefined && requestedStart >= 0 && requestedEnd >= requestedStart && sourceMessage.text.slice(requestedStart, requestedEnd).trim() === anchorText;
+          startOffset = exactOffsets ? requestedStart : sourceMessage.text.indexOf(anchorText);
+          if (startOffset < 0) throw new ProviderError('选中文本无法在来源消息中定位。', 400, 'INVALID_ANCHOR_RANGE');
+          endOffset = startOffset + anchorText.length;
+        }
         const createdAt = new Date().toISOString();
         const id = randomUUID();
+        const anchor = sourceMessage ? { id: randomUUID(), nodeId: source.id, messageId: sourceMessage.id, segmentId: sourceMessage.segmentId, selectedText: anchorText || sourceMessage.text, startOffset: startOffset ?? 0, endOffset: endOffset ?? sourceMessage.text.length, createdAt } : undefined;
         const node = { id, title, summary: anchorText || `从「${source.title}」派生的正式支线。`, status: 'active' as const, kind: 'branch' as const, sourceNodeId: source.id, sourceMessageId, anchorText, x: Math.min(source.x + 220, 780), y: Math.min(source.y + 105, 360), createdAt, updatedAt: createdAt };
-        const edge = { id: randomUUID(), source: source.id, target: id, relation: 'derived-from' as const, label: anchorText ? '从内容锚点派生' : '正式支线', createdAt };
+        const edge = { id: randomUUID(), source: source.id, target: id, relation: 'derived-from' as const, anchorId: anchor?.id, label: anchorText ? '从内容锚点派生' : '正式支线', createdAt };
         const preservedMessages = draftMessages.map(message => ({ id: randomUUID(), nodeId: id, kind: message.kind as 'user' | 'assistant', text: message.text.trim(), createdAt: typeof message.createdAt === 'string' ? message.createdAt : createdAt }));
-        return { ...current, activeNodeId: id, nodeId: id, messages: [...current.messages, ...preservedMessages], discussionNodes: [...current.discussionNodes.map(item => item.id === source.id ? { ...item, status: 'active' as const } : item), node], discussionEdges: [...current.discussionEdges, edge] };
+        return withCurrentNodeContext({ ...current, activeNodeId: id, nodeId: id, messages: [...current.messages, ...preservedMessages], anchors: anchor ? [...current.anchors, anchor] : current.anchors, discussionNodes: [...current.discussionNodes.map(item => item.id === source.id ? { ...item, status: 'active' as const } : item), node], discussionEdges: [...current.discussionEdges, edge] }, id);
       });
       response.status(201).json({ workspace });
     } catch (error) { next(error); }
@@ -193,9 +363,9 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
       const sourceNodeId = typeof request.body?.sourceNodeId === 'string' ? request.body.sourceNodeId : '';
       const anchorText = typeof request.body?.anchorText === 'string' ? request.body.anchorText.trim().slice(0, 4000) : '';
       const prompt = typeof request.body?.message === 'string' ? request.body.message.trim() : '';
-      const draftHistory = Array.isArray(request.body?.history) ? request.body.history.slice(-20) : [];
+      const draftHistory: unknown[] = Array.isArray(request.body?.history) ? request.body.history.slice(-20) : [];
       if (!sourceNodeId || !anchorText || !prompt || prompt.length > 20_000) return response.status(400).json({ error: { code: 'INVALID_TEMP_CHAT', message: '临时支线需要来源节点、内容锚点和有效问题。' } });
-      if (draftHistory.some(message => !message || !['user', 'assistant'].includes(message.kind) || typeof message.text !== 'string' || message.text.length > 20_000)) return response.status(400).json({ error: { code: 'INVALID_TEMP_HISTORY', message: '临时对话历史格式无效。' } });
+      if (!draftHistory.every(isDraftMessage)) return response.status(400).json({ error: { code: 'INVALID_TEMP_HISTORY', message: '临时对话历史格式无效。' } });
       const current = await store.read();
       if (!current.discussionNodes.some(node => node.id === sourceNodeId)) return response.status(404).json({ error: { code: 'NODE_NOT_FOUND', message: '来源讨论节点不存在。' } });
       const activeContext = current.contextItems.filter(item => item.status === 'active');
@@ -221,10 +391,46 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
   app.post('/api/nodes/:id/activate', async (request, response, next) => {
     try {
       const workspace = await store.update(current => {
-        if (!current.discussionNodes.some(node => node.id === request.params.id)) throw new ProviderError('讨论节点不存在。', 404, 'NODE_NOT_FOUND');
-        return { ...current, activeNodeId: request.params.id, nodeId: request.params.id };
+        const node = current.discussionNodes.find(item => item.id === request.params.id);
+        if (!node) throw new ProviderError('讨论节点不存在。', 404, 'NODE_NOT_FOUND');
+        if (node.status === 'archived') throw new ProviderError('归档节点不能激活，请先恢复。', 409, 'NODE_ARCHIVED');
+        return withCurrentNodeContext({ ...current, activeNodeId: request.params.id, nodeId: request.params.id }, request.params.id);
       });
       response.json({ workspace });
+    } catch (error) { next(error); }
+  });
+
+  app.patch('/api/nodes/:id/status', async (request, response, next) => {
+    try {
+      const status = request.body?.status;
+      if (!['draft', 'active', 'resolved', 'stale', 'archived'].includes(status)) return response.status(400).json({ error: { code: 'INVALID_NODE_STATUS', message: '无效的节点状态。' } });
+      const workspace = await store.update(current => {
+        const node = current.discussionNodes.find(item => item.id === request.params.id);
+        if (!node) throw new ProviderError('讨论节点不存在。', 404, 'NODE_NOT_FOUND');
+        if (status === 'archived' && current.discussionNodes.filter(item => item.status !== 'archived').length <= 1) throw new ProviderError('至少需要保留一个未归档节点。', 409, 'CANNOT_ARCHIVE_LAST_NODE');
+        const updatedAt = new Date().toISOString();
+        const nodes = current.discussionNodes.map(item => item.id === node.id ? { ...item, status, updatedAt } : item);
+        if (status !== 'archived' || current.activeNodeId !== node.id) return { ...current, discussionNodes: nodes };
+        const fallback = nodes.find(item => item.status !== 'archived')!;
+        return withCurrentNodeContext({ ...current, discussionNodes: nodes, activeNodeId: fallback.id, nodeId: fallback.id }, fallback.id);
+      });
+      response.json({ workspace });
+    } catch (error) { next(error); }
+  });
+
+  app.post('/api/nodes/:id/segments', async (request, response, next) => {
+    try {
+      const title = typeof request.body?.title === 'string' ? request.body.title.trim() : '';
+      const messageIds = Array.isArray(request.body?.messageIds) ? [...new Set(request.body.messageIds.filter((id: unknown): id is string => typeof id === 'string'))] : [];
+      if (!title || title.length > 200) return response.status(400).json({ error: { code: 'INVALID_SEGMENT_TITLE', message: 'Segment 标题不能为空且不能超过 200 字符。' } });
+      const workspace = await store.update(current => {
+        if (!current.discussionNodes.some(node => node.id === request.params.id)) throw new ProviderError('讨论节点不存在。', 404, 'NODE_NOT_FOUND');
+        if (messageIds.some(id => !current.messages.some(message => message.id === id && message.nodeId === request.params.id))) throw new ProviderError('Segment 只能包含所属节点中的 Event。', 400, 'INVALID_SEGMENT_EVENT');
+        const ordinal = Math.max(-1, ...current.segments.filter(segment => segment.nodeId === request.params.id).map(segment => segment.ordinal)) + 1;
+        const segment = { id: randomUUID(), nodeId: request.params.id, ordinal, title, createdAt: new Date().toISOString() };
+        return { ...current, segments: [...current.segments, segment], messages: current.messages.map(message => messageIds.includes(message.id) ? { ...message, segmentId: segment.id } : message) };
+      });
+      response.status(201).json({ workspace, segment: workspace.segments.at(-1) });
     } catch (error) { next(error); }
   });
 
@@ -259,6 +465,8 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
           activeNodeId: current.activeNodeId === node.id ? fallback.id : current.activeNodeId,
           nodeId: current.nodeId === node.id ? fallback.id : current.nodeId,
           messages,
+          anchors: current.anchors.filter(anchor => anchor.nodeId !== node.id),
+          segments: current.segments.filter(segment => segment.nodeId !== node.id),
           manifests: current.manifests.filter(manifest => !removedManifestIds.has(manifest.id)),
           discussionNodes: remainingNodes,
           discussionEdges: current.discussionEdges.filter(edge => edge.source !== node.id && edge.target !== node.id),
@@ -272,7 +480,7 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
     try {
       const source = typeof request.body?.source === 'string' ? request.body.source : '';
       const target = typeof request.body?.target === 'string' ? request.body.target : '';
-      const relation = typeof request.body?.relation === 'string' ? request.body.relation : 'references';
+      const relation = typeof request.body?.relation === 'string' ? request.body.relation : 'related-to';
       const label = typeof request.body?.label === 'string' ? request.body.label.trim().slice(0, 120) : '';
       if (!source || !target || source === target || !edgeRelations.has(relation)) return response.status(400).json({ error: { code: 'INVALID_EDGE', message: '关系必须连接两个不同的节点，并使用有效关系类型。' } });
       if (!label) return response.status(400).json({ error: { code: 'INVALID_EDGE_LABEL', message: '关系标签不能为空。' } });
@@ -280,7 +488,7 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
         if (!current.discussionNodes.some(node => node.id === source) || !current.discussionNodes.some(node => node.id === target)) throw new ProviderError('关系节点不存在。', 404, 'NODE_NOT_FOUND');
         if (current.discussionEdges.some(edge => edge.source === source && edge.target === target && edge.relation === relation)) throw new ProviderError('相同关系已经存在。', 409, 'EDGE_ALREADY_EXISTS');
         const createdAt = new Date().toISOString();
-        const edge = { id: randomUUID(), source, target, relation: relation as 'derived-from' | 'references' | 'merged-into', label, createdAt };
+        const edge = { id: randomUUID(), source, target, relation: relation as 'derived-from' | 'references' | 'related-to' | 'merged-into', label, createdAt };
         return { ...current, discussionEdges: [...current.discussionEdges, edge] };
       });
       response.status(201).json({ workspace });
@@ -314,7 +522,7 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
         const createdAt = new Date().toISOString();
         const mergeMessage = { id: randomUUID(), nodeId: target.id, kind: 'assistant' as const, text: `已从支线「${source.title}」合并引用：\n\n${summary}`, createdAt };
         const edge = { id: randomUUID(), source: source.id, target: target.id, relation: 'merged-into' as const, label: '选择性合并', createdAt };
-        return { ...current, activeNodeId: target.id, nodeId: target.id, messages: [...current.messages, mergeMessage], discussionNodes: current.discussionNodes.map(node => node.id === source.id ? { ...node, status: 'resolved' as const, updatedAt: createdAt } : node), discussionEdges: [...current.discussionEdges, edge] };
+        return withCurrentNodeContext({ ...current, activeNodeId: target.id, nodeId: target.id, messages: [...current.messages, mergeMessage], discussionNodes: current.discussionNodes.map(node => node.id === source.id ? { ...node, status: 'resolved' as const, updatedAt: createdAt } : node), discussionEdges: [...current.discussionEdges, edge] }, target.id);
       });
       response.json({ workspace });
     } catch (error) { next(error); }
@@ -322,9 +530,11 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
 
   app.post('/api/chat/stream', async (request, response, next) => {
     try {
-      const prompt = typeof request.body?.message === 'string' ? request.body.message.trim() : '';
-      if (!prompt || prompt.length > 20_000) return response.status(400).json({ error: { code: 'INVALID_MESSAGE', message: '消息不能为空且不能超过 20,000 字符。' } });
-      const run = await prepareChatRun(prompt);
+      const input = parseChatInput(request.body);
+      const run = await prepareChatRun(input);
+      const controller = new AbortController();
+      run.request.signal = controller.signal;
+      response.on('close', () => { if (!response.writableEnded) controller.abort(); });
       response.status(200);
       response.setHeader('Content-Type', 'text/event-stream; charset=utf-8');
       response.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -336,7 +546,7 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
         writeSse(response, 'runtime', event);
         if (event.type === 'RUN_ERROR') { response.end(); return; }
         if (event.type === 'RUN_END') {
-          const committed = await commitChatRun(run, { text: event.text, model: event.model, provider: event.provider });
+          const committed = await commitChatRun(run, { text: event.text, model: event.model, provider: event.provider, reasoning: event.reasoning, toolCalls: event.toolCalls, usage: event.usage || { promptTokens: 0, completionTokens: Math.ceil(event.text.length / 4), totalTokens: Math.ceil(event.text.length / 4), estimated: true } });
           writeSse(response, 'commit', { type: 'COMMIT', ...committed });
           response.end();
           return;
@@ -356,9 +566,7 @@ export function createApp(store: WorkspaceStore, provider: ProviderService, serv
 
   app.post('/api/chat', async (request, response, next) => {
     try {
-      const prompt = typeof request.body?.message === 'string' ? request.body.message.trim() : '';
-      if (!prompt || prompt.length > 20_000) return response.status(400).json({ error: { code: 'INVALID_MESSAGE', message: '消息不能为空且不能超过 20,000 字符。' } });
-      const run = await prepareChatRun(prompt);
+      const run = await prepareChatRun(parseChatInput(request.body));
       const completion = await collectRuntimeResult(runtime, run.request);
       response.status(201).json(await commitChatRun(run, completion));
     } catch (error) { next(error); }

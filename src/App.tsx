@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react';
-import { initialContext } from './data';
-import type { ContextMode, ContextStatus, DiscussionEdge, DiscussionNode, Message, ProviderCatalog, ProviderPresetInfo, ProviderStatus, View, WorkspaceSnapshot } from './types';
-import { api } from './api';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { Attachment, ContextManifest, ContextMode, ContextStatus, DiscussionEdge, DiscussionNode, Message, ProviderCatalog, ProviderPresetInfo, ProviderStatus, Segment, View, WorkspaceSnapshot } from './types';
+import { api, type ChatRequestOptions } from './api';
 import { Sidebar } from './components/Sidebar';
 import { ChatView } from './components/ChatView';
 import { GraphView } from './components/GraphView';
@@ -12,39 +11,121 @@ import { ProviderSettings, type ProviderFormState } from './components/ProviderS
 export function App() {
   const initialNode: DiscussionNode = { id: 'information-architecture', title: '信息架构方向', summary: '探索首屏的内容层级、上下文入口与专业能力的渐进呈现方式。', status: 'active', kind: 'main', x: 350, y: 150, createdAt: '2026-08-09T12:00:00.000Z', updatedAt: '2026-08-09T12:00:00.000Z' };
   const [view, setView] = useState<View>('chat');
-  const [contextItems, setContextItems] = useState(initialContext);
+  const [contextItems, setContextItems] = useState<WorkspaceSnapshot['contextItems']>([]);
   const [mode, setMode] = useState<ContextMode>('Assisted');
-  const [messages, setMessages] = useState<Message[]>([
-    { id: 'm1', nodeId: initialNode.id, kind: 'user', text: '结合前两轮访谈，我们应该怎样组织产品的首屏信息架构？重点考虑专业用户，但不要让首次进入的人觉得复杂。', createdAt: '2026-08-09T12:00:00.000Z' },
-    { id: 'm2', nodeId: initialNode.id, kind: 'assistant', text: '我建议首屏采用“聚焦工作区 + 渐进式上下文”的双层结构。用户首先进入单一讨论流，项目结构、图谱与状态都作为邻近但不抢占注意力的能力存在。', createdAt: '2026-08-09T12:00:10.000Z' },
-  ]);
-  const [discussionNodes, setDiscussionNodes] = useState<DiscussionNode[]>([initialNode]);
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [attachments, setAttachments] = useState<Attachment[]>([]);
+  const [discussionNodes, setDiscussionNodes] = useState<DiscussionNode[]>([]);
   const [discussionEdges, setDiscussionEdges] = useState<DiscussionEdge[]>([]);
-  const [activeNodeId, setActiveNodeId] = useState(initialNode.id);
+  const [activeNodeId, setActiveNodeId] = useState('');
   const [provider, setProvider] = useState<ProviderStatus>({ configured: false, name: 'OpenAI-compatible', model: '未配置', baseUrl: '' });
   const [providerCatalog, setProviderCatalog] = useState<ProviderCatalog>({ providers: [], models: [], activeModelId: null });
   const [providerPresets, setProviderPresets] = useState<Record<string, ProviderPresetInfo>>({});
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [syncError, setSyncError] = useState('');
   const [contextOpen, setContextOpen] = useState(false);
+  const [manifests, setManifests] = useState<ContextManifest[]>([]);
+  const [segments, setSegments] = useState<Segment[]>([]);
+  const [boot, setBoot] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [bootError, setBootError] = useState('');
+  const [online, setOnline] = useState(() => navigator.onLine);
+  const [networkNotice, setNetworkNotice] = useState('');
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [onboardingOpen, setOnboardingOpen] = useState(() => localStorage.getItem('rhiza:onboarding-seen') !== '1');
+  const [focusComposerRequest, setFocusComposerRequest] = useState(0);
+  const loadRequestRef = useRef(0);
+  const modalReturnFocusRef = useRef<HTMLElement | null>(null);
+  const activeModalRef = useRef<HTMLElement | null>(null);
 
-  const applyWorkspace = (workspace: WorkspaceSnapshot) => {
+  const applyWorkspace = useCallback((workspace: WorkspaceSnapshot) => {
     setContextItems(workspace.contextItems);
     setMessages(workspace.messages);
+    setAttachments(workspace.attachments || []);
     setMode(workspace.mode);
     setDiscussionNodes(workspace.discussionNodes);
     setDiscussionEdges(workspace.discussionEdges);
     setActiveNodeId(workspace.activeNodeId);
-  };
+    setManifests(workspace.manifests || []);
+    setSegments(workspace.segments || []);
+  }, []);
 
-  useEffect(() => {
-    api.getWorkspace().then(({ workspace, provider: providerStatus, providerCatalog: catalog }) => {
+  const loadWorkspace = useCallback(async (background = false) => {
+    const requestId = ++loadRequestRef.current;
+    if (!background) setBoot('loading');
+    try {
+      const { workspace, provider: providerStatus, providerCatalog: catalog } = await api.getWorkspace();
+      if (requestId !== loadRequestRef.current) return 'stale' as const;
       applyWorkspace(workspace);
       setProvider(providerStatus);
       setProviderCatalog(catalog);
       setSyncError('');
-    }).catch(error => setSyncError(error instanceof Error ? error.message : '无法连接后端'));
-  }, []);
+      setBoot('ready'); setBootError('');
+      return 'loaded' as const;
+    } catch (error) {
+      if (requestId !== loadRequestRef.current) return 'stale' as const;
+      const message = error instanceof Error ? error.message : '无法连接后端';
+      if (!background) { setBoot('error'); setBootError(message); }
+      setSyncError(message);
+      return 'failed' as const;
+    }
+  }, [applyWorkspace]);
+
+  useEffect(() => { void loadWorkspace(); }, [loadWorkspace]);
+  useEffect(() => {
+    const goOffline = () => { setOnline(false); setNetworkNotice('当前离线，发送已暂停。'); };
+    const goOnline = () => {
+      setOnline(true);
+      setNetworkNotice('网络已恢复，正在刷新工作区。');
+      void loadWorkspace(boot === 'ready').then(result => {
+        if (result !== 'stale') setNetworkNotice(result === 'loaded' ? '网络已恢复，工作区已刷新。' : '网络已恢复，但工作区刷新失败。');
+      });
+    };
+    window.addEventListener('offline', goOffline); window.addEventListener('online', goOnline);
+    return () => { window.removeEventListener('offline', goOffline); window.removeEventListener('online', goOnline); };
+  }, [boot, loadWorkspace]);
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      const modifier = event.metaKey || event.ctrlKey;
+      if (onboardingOpen) {
+        if (event.key === 'Escape') { localStorage.setItem('rhiza:onboarding-seen', '1'); setOnboardingOpen(false); }
+        return;
+      }
+      if (paletteOpen) {
+        if (event.key === 'Escape') setPaletteOpen(false);
+        return;
+      }
+      if (settingsOpen) {
+        if (event.key === 'Escape') setSettingsOpen(false);
+        return;
+      }
+      if (event.key === 'Escape') { setPaletteOpen(false); setContextOpen(false); setSettingsOpen(false); return; }
+      if (modifier && event.key.toLowerCase() === 'k') { event.preventDefault(); setPaletteOpen(true); return; }
+      if (modifier && event.key === '1') { event.preventDefault(); setView('chat'); }
+      if (modifier && event.key === '2') { event.preventDefault(); setView('graph'); }
+      if (modifier && event.key === '3') { event.preventDefault(); setView('state'); }
+      if (modifier && event.shiftKey && event.key.toLowerCase() === 'c') { event.preventDefault(); setContextOpen(true); }
+      if (event.key === '/' && !modifier && !(event.target instanceof HTMLInputElement) && !(event.target instanceof HTMLTextAreaElement)) { event.preventDefault(); setView('chat'); setFocusComposerRequest(value => value + 1); }
+    };
+    window.addEventListener('keydown', keydown); return () => window.removeEventListener('keydown', keydown);
+  }, [onboardingOpen, paletteOpen, settingsOpen]);
+  useEffect(() => {
+    if (!paletteOpen && !onboardingOpen) return;
+    modalReturnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = activeModalRef.current;
+    const focusable = () => [...(dialog?.querySelectorAll<HTMLElement>('button:not([disabled]), [href], input:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])') || [])];
+    const first = focusable()[0];
+    first?.focus();
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const controls = focusable();
+      if (!controls.length) return;
+      const firstControl = controls[0]; const lastControl = controls[controls.length - 1];
+      if (event.shiftKey && document.activeElement === firstControl) { event.preventDefault(); lastControl.focus(); }
+      else if (!event.shiftKey && document.activeElement === lastControl) { event.preventDefault(); firstControl.focus(); }
+    };
+    document.addEventListener('keydown', trapFocus);
+    return () => { document.removeEventListener('keydown', trapFocus); modalReturnFocusRef.current?.focus(); };
+  }, [onboardingOpen, paletteOpen]);
 
   const applyCatalog = (catalog: ProviderCatalog) => {
     setProviderCatalog(catalog);
@@ -95,27 +176,60 @@ export function App() {
     }
   };
 
-  const sendMessage = async (text: string) => {
+  const updatePin = async (id: string, pinned: boolean) => {
+    const previous = contextItems;
+    setContextItems(items => items.map(item => item.id === id ? { ...item, pinned, ...(pinned ? { status: 'active' as const } : {}) } : item));
+    try {
+      const { workspace } = await api.setContextPin(id, pinned);
+      setContextItems(workspace.contextItems);
+      setSyncError('');
+    } catch (error) {
+      setContextItems(previous);
+      setSyncError(error instanceof Error ? error.message : 'Pin 保存失败');
+    }
+  };
+
+  const addContextSource = async (sourceType: 'node' | 'segment' | 'file', sourceId: string) => {
+    try {
+      const { workspace } = await api.addContextSource(sourceType, sourceId);
+      setContextItems(workspace.contextItems);
+      setSyncError('');
+    } catch (error) { setSyncError(error instanceof Error ? error.message : 'Context 来源添加失败'); }
+  };
+
+  const sendMessage = async (text: string, options: ChatRequestOptions = {}) => {
     const pendingId = `pending-${Date.now()}`;
     const pendingAssistantId = `${pendingId}-assistant`;
-    const pending: Message = { id: pendingId, nodeId: activeNodeId, kind: 'user', text, createdAt: new Date().toISOString(), pending: true };
-    const pendingAssistant: Message = { id: pendingAssistantId, nodeId: activeNodeId, kind: 'assistant', text: '', createdAt: new Date().toISOString(), pending: true };
+    const pending: Message = { id: pendingId, nodeId: activeNodeId, kind: 'user', text, createdAt: new Date().toISOString(), pending: true, attachmentIds: options.attachmentIds, operation: options.operation };
+    const pendingAssistant: Message = { id: pendingAssistantId, nodeId: activeNodeId, kind: 'assistant', text: '', createdAt: new Date().toISOString(), pending: true, operation: options.operation };
     setMessages(current => [...current, pending]);
     try {
       const result = await api.streamMessage(text, event => {
-        if (event.type !== 'CONTENT_DELTA') return;
-        setMessages(current => current.some(message => message.id === pendingAssistantId)
-          ? current.map(message => message.id === pendingAssistantId ? { ...message, text: message.text + event.delta } : message)
-          : [...current, { ...pendingAssistant, text: event.delta }]);
-      });
+        if (!['CONTENT_DELTA', 'REASONING_DELTA', 'TOOL_CALL_DELTA', 'USAGE'].includes(event.type)) return;
+        setMessages(current => {
+          const existing = current.find(message => message.id === pendingAssistantId) || pendingAssistant;
+          let next = existing;
+          if (event.type === 'CONTENT_DELTA') next = { ...existing, text: existing.text + event.delta };
+          if (event.type === 'REASONING_DELTA') next = { ...existing, reasoning: (existing.reasoning || '') + event.delta };
+          if (event.type === 'TOOL_CALL_DELTA') next = { ...existing, toolCalls: [...(existing.toolCalls || []).filter(tool => tool.id !== event.toolCall.id), event.toolCall] };
+          if (event.type === 'USAGE') next = { ...existing, usage: event.usage };
+          return current.some(message => message.id === pendingAssistantId) ? current.map(message => message.id === pendingAssistantId ? next : message) : [...current, next];
+        });
+      }, options);
       setMessages(current => [...current.filter(message => message.id !== pendingId && message.id !== pendingAssistantId), result.userMessage, result.assistantMessage]);
+      setManifests(current => current.some(manifest => manifest.id === result.manifest.id) ? current : [...current, result.manifest]);
       setSyncError('');
     } catch (error) {
-      setMessages(current => current.filter(message => message.id !== pendingAssistantId).map(message => message.id === pendingId ? { ...message, pending: false } : message));
+      setMessages(current => current.filter(message => message.id !== pendingAssistantId && message.id !== pendingId));
       throw error;
     }
   };
-  const createBranch = async (input: { title: string; anchorText?: string; sourceMessageId?: string; messages?: Array<Pick<Message, 'kind' | 'text' | 'createdAt'>> }) => {
+  const uploadAttachment = async (file: File) => {
+    const attachment = await api.uploadAttachment(file);
+    setAttachments(current => current.some(item => item.id === attachment.id) ? current : [...current, attachment]);
+    return attachment;
+  };
+  const createBranch = async (input: { title: string; anchorText?: string; anchorStart?: number; anchorEnd?: number; sourceMessageId?: string; messages?: Array<Pick<Message, 'kind' | 'text' | 'createdAt'>> }) => {
     const { workspace } = await api.createBranch(input);
     applyWorkspace(workspace);
     setView('chat');
@@ -148,7 +262,7 @@ export function App() {
     applyWorkspace(workspace);
     setSyncError('');
   };
-  const createGraphEdge = async (input: { source: string; target: string; relation: 'derived-from' | 'references' | 'merged-into'; label: string }) => {
+  const createGraphEdge = async (input: { source: string; target: string; relation: 'derived-from' | 'references' | 'related-to' | 'merged-into'; label: string }) => {
     const { workspace } = await api.createGraphEdge(input);
     applyWorkspace(workspace);
     setSyncError('');
@@ -167,14 +281,33 @@ export function App() {
   const activeNode = discussionNodes.find(node => node.id === activeNodeId) || discussionNodes[0] || initialNode;
   const activeMessages = messages.filter(message => message.nodeId === activeNode.id);
 
+  if (boot === 'loading') return <main className="app-loading" aria-busy="true" aria-live="polite"><strong>正在加载工作区…</strong><p>正在同步项目、讨论节点与上下文。</p></main>;
+  if (boot === 'error') return <main className="app-loading" role="alert"><strong>工作区加载失败</strong><p>{bootError}</p><button className="primary-button" onClick={() => void loadWorkspace()}>重试</button></main>;
+
+  const closeOnboarding = () => { localStorage.setItem('rhiza:onboarding-seen', '1'); setOnboardingOpen(false); };
+  const runCommand = (action: () => void) => { setPaletteOpen(false); action(); };
+
   return <div className={`app-shell ${contextOpen ? 'context-open' : ''}`}>
+    <a className="skip-link" href="#workspace-main">跳到主要内容</a>
+    <div className="network-status" aria-live="polite" role="status">{networkNotice}</div>
     <div className="ambient-grid" aria-hidden="true"/>
-    <Sidebar view={view} nodes={discussionNodes} messages={messages} activeNodeId={activeNode.id} onView={setView} onNode={id => activateNode(id, true)} onSettings={openSettings}/>
-    {view === 'chat' && <ChatView activeNode={activeNode} nodes={discussionNodes} mode={mode} activeCount={activeCount} messages={activeMessages} provider={provider} providerCatalog={providerCatalog} syncError={syncError} onSend={sendMessage} onTempSend={sendTemporaryMessage} onCreateBranch={createBranch} onMerge={mergeNode} onSelectModel={selectModel} onSettings={openSettings} onOpenContext={() => setContextOpen(open => !open)} onGraph={() => setView('graph')}/>} 
-    {view === 'graph' && <GraphView nodes={discussionNodes} edges={discussionEdges} activeNodeId={activeNode.id} onMove={moveNode} onActivate={id => activateNode(id, true)} onCreateNode={createGraphNode} onDeleteNode={deleteGraphNode} onCreateEdge={createGraphEdge} onDeleteEdge={deleteGraphEdge}/>}
-    {view === 'state' && <StateView/>}
-    <div className="context-backdrop" onClick={() => setContextOpen(false)}/>
-    <ContextPanel items={contextItems} mode={mode} onMode={updateMode} onStatus={updateStatus}/>
+    <Sidebar view={view} nodes={discussionNodes} messages={messages} activeNodeId={activeNode.id} onView={setView} onNode={id => activateNode(id, true)} onSettings={openSettings} onCommand={() => setPaletteOpen(true)} onHelp={() => setOnboardingOpen(true)}/>
+    {discussionNodes.length === 0 ? <main id="workspace-main" className="workspace-empty"><h1>这个工作区还没有讨论节点</h1><p>请通过项目入口创建第一个节点，然后开始建立上下文。</p></main> : view === 'chat' && <ChatView
+      activeNode={activeNode} nodes={discussionNodes} edges={discussionEdges} mode={mode}
+      activeCount={activeCount} messages={activeMessages} manifests={manifests} attachments={attachments}
+      provider={provider} providerCatalog={providerCatalog} syncError={syncError} online={online} focusComposerRequest={focusComposerRequest} onSend={sendMessage}
+      onUpload={uploadAttachment} onTempSend={sendTemporaryMessage} onCreateBranch={createBranch}
+      onActivateNode={id => activateNode(id, true)} onMerge={mergeNode} onSelectModel={selectModel}
+      onSettings={openSettings} onOpenContext={() => setContextOpen(open => !open)} onGraph={() => setView('graph')}
+    />}
+    {discussionNodes.length > 0 && view === 'graph' && (
+      <GraphView nodes={discussionNodes} edges={discussionEdges} activeNodeId={activeNode.id} onMove={moveNode} onActivate={id => activateNode(id, true)} onCreateNode={createGraphNode} onDeleteNode={deleteGraphNode} onCreateEdge={createGraphEdge} onDeleteEdge={deleteGraphEdge}/>
+    )}
+    {discussionNodes.length > 0 && view === 'state' && <StateView/>}
+    <button className="context-backdrop" aria-label="关闭上下文面板" onClick={() => setContextOpen(false)}/>
+    <ContextPanel items={contextItems} mode={mode} nodes={discussionNodes} segments={segments} attachments={attachments} onMode={updateMode} onStatus={updateStatus} onPin={updatePin} onAddSource={addContextSource}/>
     {settingsOpen && <ProviderSettings catalog={providerCatalog} presets={providerPresets} onClose={() => setSettingsOpen(false)} onSave={saveProvider} onDiscover={discoverModels} onToggleModel={updateModel} onSelectModel={selectModel}/>} 
+    {paletteOpen && <div className="dialog-backdrop" role="presentation" onMouseDown={event => { if (event.target === event.currentTarget) setPaletteOpen(false); }}><section ref={activeModalRef} className="command-palette" role="dialog" aria-modal="true" aria-label="命令面板"><header><strong>搜索或运行命令</strong><kbd>Esc</kbd></header><button onClick={() => runCommand(() => setView('chat'))}>当前讨论 <kbd>⌘1</kbd></button><button onClick={() => runCommand(() => setView('graph'))}>对话图谱 <kbd>⌘2</kbd></button><button onClick={() => runCommand(() => setView('state'))}>知识状态 <kbd>⌘3</kbd></button><button onClick={() => runCommand(() => setContextOpen(true))}>打开 Context <kbd>⌘⇧C</kbd></button><button onClick={() => runCommand(() => { setView('chat'); setFocusComposerRequest(value => value + 1); })}>聚焦消息输入框 <kbd>/</kbd></button><button onClick={() => runCommand(() => setOnboardingOpen(true))}>帮助与快捷键</button></section></div>}
+    {onboardingOpen && <div className="dialog-backdrop" role="presentation"><section ref={activeModalRef} className="onboarding-dialog" role="dialog" aria-modal="true" aria-labelledby="onboarding-title"><h2 id="onboarding-title">欢迎来到 Rhiza</h2><p>用四个对象把研究和决策留在同一个工作区：</p><dl><div><dt>Project</dt><dd>一个完整的研究或决策空间。</dd></div><div><dt>Node</dt><dd>围绕一个问题持续展开的讨论。</dd></div><div><dt>Graph</dt><dd>展示讨论之间的衍生、引用和合并关系。</dd></div><div><dt>Context</dt><dd>明确控制本轮发送给模型的材料。</dd></div></dl><button className="primary-button" autoFocus onClick={closeOnboarding}>开始使用</button></section></div>}
   </div>;
 }

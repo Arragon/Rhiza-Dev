@@ -1,5 +1,5 @@
 import type { AiConfig } from './config';
-import type { ContextItem, StoredMessage } from './domain';
+import type { ContextItem, GenerationOptions, StoredAttachment, StoredMessage, TokenUsage, ToolCall } from './domain';
 import { buildLibreChatAgentMessages } from './librechat-shared';
 
 export class ProviderError extends Error {
@@ -13,12 +13,22 @@ interface CompletionRequest {
   history: StoredMessage[];
   contextItems: ContextItem[];
   mode: string;
+  attachments?: StoredAttachment[];
+  generation?: GenerationOptions;
+  signal?: AbortSignal;
 }
+
+export type ProviderStreamEvent =
+  | { type: 'content'; delta: string }
+  | { type: 'reasoning'; delta: string }
+  | { type: 'tool'; toolCall: ToolCall }
+  | { type: 'usage'; usage: TokenUsage };
 
 function completionPayload(config: AiConfig, request: CompletionRequest, stream = false) {
   return {
     model: config.model,
-    temperature: config.temperature,
+    temperature: request.generation?.temperature ?? config.temperature,
+    ...(request.generation ? { top_p: request.generation.topP, max_tokens: request.generation.maxTokens } : {}),
     ...(stream ? { stream: true } : {}),
     messages: buildLibreChatAgentMessages(request),
   };
@@ -39,18 +49,38 @@ function extractText(payload: unknown): string | undefined {
   return typeof data.output_text === 'string' ? data.output_text.trim() : undefined;
 }
 
-function extractDelta(payload: unknown): string {
-  if (!payload || typeof payload !== 'object') return '';
-  const content = (payload as { choices?: Array<{ delta?: { content?: unknown } }> }).choices?.[0]?.delta?.content;
+function textDelta(content: unknown): string {
   if (typeof content === 'string') return content;
   if (!Array.isArray(content)) return '';
   return content.map(part => part && typeof part === 'object' && 'text' in part && typeof part.text === 'string' ? part.text : '').join('');
 }
 
-function parseSseDelta(frame: string): string {
+function parseSseFrame(frame: string): ProviderStreamEvent[] {
   const data = frame.split(/\r?\n/).filter(line => line.startsWith('data:')).map(line => line.slice(5).trimStart()).join('\n');
-  if (!data || data === '[DONE]') return '';
-  try { return extractDelta(JSON.parse(data)); } catch { return ''; }
+  if (!data || data === '[DONE]') return [];
+  try {
+    const payload = JSON.parse(data) as {
+      choices?: Array<{ delta?: { content?: unknown; reasoning_content?: unknown; reasoning?: unknown; tool_calls?: Array<{ index?: number; id?: string; function?: { name?: string; arguments?: string } }> } }>;
+      usage?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number };
+    };
+    const delta = payload.choices?.[0]?.delta;
+    const events: ProviderStreamEvent[] = [];
+    const content = textDelta(delta?.content);
+    const reasoning = textDelta(delta?.reasoning_content ?? delta?.reasoning);
+    if (content) events.push({ type: 'content', delta: content });
+    if (reasoning) events.push({ type: 'reasoning', delta: reasoning });
+    for (const tool of delta?.tool_calls || []) {
+      events.push({ type: 'tool', toolCall: { id: `tool-${tool.index ?? 0}`, name: tool.function?.name || '', arguments: tool.function?.arguments || '' } });
+    }
+    if (payload.usage) {
+      events.push({ type: 'usage', usage: {
+        promptTokens: payload.usage.prompt_tokens || 0,
+        completionTokens: payload.usage.completion_tokens || 0,
+        totalTokens: payload.usage.total_tokens || (payload.usage.prompt_tokens || 0) + (payload.usage.completion_tokens || 0),
+      } });
+    }
+    return events;
+  } catch { return []; }
 }
 
 export class OpenAiCompatibleProvider {
@@ -88,7 +118,7 @@ export class OpenAiCompatibleProvider {
           ...this.config.extraHeaders,
         },
         body: JSON.stringify(completionPayload(this.config, request)),
-        signal: controller.signal,
+        signal: request.signal ? AbortSignal.any([controller.signal, request.signal]) : controller.signal,
       });
 
       const raw = await response.text();
@@ -106,6 +136,7 @@ export class OpenAiCompatibleProvider {
       return text;
     } catch (error) {
       if (error instanceof ProviderError) throw error;
+      if (error instanceof Error && error.name === 'AbortError' && request.signal?.aborted) throw new ProviderError('生成已停止。', 499, 'GENERATION_STOPPED');
       if (error instanceof Error && error.name === 'AbortError') {
         throw new ProviderError('第三方 AI 请求超时，请检查网络或调高 AI_TIMEOUT_MS。', 504, 'PROVIDER_TIMEOUT');
       }
@@ -115,8 +146,8 @@ export class OpenAiCompatibleProvider {
     }
   }
 
-  /** Normalizes OpenAI-compatible SSE into text deltas without exposing provider wire events. */
-  async *stream(request: CompletionRequest): AsyncIterable<string> {
+  /** Normalizes OpenAI-compatible SSE without exposing provider wire events. */
+  async *stream(request: CompletionRequest): AsyncIterable<ProviderStreamEvent> {
     if (!this.config.apiKey && !this.config.allowNoKey) {
       throw new ProviderError('尚未配置第三方 AI。请在模型设置中配置供应商和模型。', 503, 'PROVIDER_NOT_CONFIGURED');
     }
@@ -132,7 +163,7 @@ export class OpenAiCompatibleProvider {
           ...this.config.extraHeaders,
         },
         body: JSON.stringify(completionPayload(this.config, request, true)),
-        signal: controller.signal,
+        signal: request.signal ? AbortSignal.any([controller.signal, request.signal]) : controller.signal,
       });
 
       if (!response.ok) {
@@ -149,7 +180,7 @@ export class OpenAiCompatibleProvider {
       if (!contentType.includes('text/event-stream')) {
         const text = extractText(await response.json().catch(() => ({})));
         if (!text) throw new ProviderError('第三方 AI 返回了无法识别的空响应。', 502, 'INVALID_PROVIDER_RESPONSE');
-        yield text;
+        yield { type: 'content', delta: text };
         return;
       }
 
@@ -163,17 +194,14 @@ export class OpenAiCompatibleProvider {
         buffer += decoder.decode(value, { stream: !done });
         const frames = buffer.split(/\r?\n\r?\n/);
         buffer = frames.pop() || '';
-        for (const frame of frames) {
-          const delta = parseSseDelta(frame);
-          if (delta) { emitted = true; yield delta; }
-        }
+        for (const frame of frames) for (const event of parseSseFrame(frame)) { emitted = true; yield event; }
         if (done) break;
       }
-      const trailingDelta = parseSseDelta(buffer);
-      if (trailingDelta) { emitted = true; yield trailingDelta; }
+      for (const event of parseSseFrame(buffer)) { emitted = true; yield event; }
       if (!emitted) throw new ProviderError('第三方 AI 事件流未包含文本内容。', 502, 'INVALID_PROVIDER_RESPONSE');
     } catch (error) {
       if (error instanceof ProviderError) throw error;
+      if (error instanceof Error && error.name === 'AbortError' && request.signal?.aborted) throw new ProviderError('生成已停止。', 499, 'GENERATION_STOPPED');
       if (error instanceof Error && error.name === 'AbortError') throw new ProviderError('第三方 AI 请求超时，请检查网络或调高 AI_TIMEOUT_MS。', 504, 'PROVIDER_TIMEOUT');
       throw new ProviderError(`无法连接第三方 AI：${error instanceof Error ? error.message : '未知错误'}`, 502, 'PROVIDER_UNREACHABLE');
     } finally {

@@ -15,7 +15,7 @@ export const providerPresets: Record<Exclude<ProviderPreset, 'custom'>, { name: 
   ollama: { name: 'Ollama', baseUrl: 'http://127.0.0.1:11434/v1', allowNoKey: true },
 };
 
-interface CompletionRequest { prompt: string; history: StoredMessage[]; contextItems: ContextItem[]; mode: string }
+interface CompletionRequest { prompt: string; history: StoredMessage[]; contextItems: ContextItem[]; mode: string; attachments?: import('./domain').StoredAttachment[]; generation?: import('./domain').GenerationOptions; signal?: AbortSignal }
 interface ProviderInput { preset: ProviderPreset; name: string; baseUrl: string; apiKey?: string; allowNoKey: boolean; modelId?: string; displayName?: string }
 
 export class ProviderService {

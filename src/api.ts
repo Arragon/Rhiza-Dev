@@ -1,4 +1,4 @@
-import type { ContextMode, ContextStatus, Message, ProviderCatalog, ProviderPreset, ProviderPresetInfo, ProviderStatus, WorkspaceSnapshot } from './types';
+import type { Attachment, ChatOperation, ContextManifest, ContextMode, ContextStatus, GenerationOptions, Message, ProviderCatalog, ProviderPreset, ProviderPresetInfo, ProviderStatus, TokenUsage, ToolCall, WorkspaceSnapshot } from './types';
 
 export class ApiError extends Error {
   constructor(message: string, readonly code = 'API_ERROR', readonly status = 500) { super(message); }
@@ -17,13 +17,30 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 type RuntimeStreamEvent =
   | { type: 'RUN_START'; requestId: string; manifestId: string; model: string; provider: string }
   | { type: 'CONTENT_DELTA'; requestId: string; delta: string }
-  | { type: 'RUN_END'; requestId: string; text: string; model: string; provider: string }
+  | { type: 'REASONING_DELTA'; requestId: string; delta: string }
+  | { type: 'TOOL_CALL_DELTA'; requestId: string; toolCall: ToolCall }
+  | { type: 'USAGE'; requestId: string; usage: TokenUsage }
+  | { type: 'RUN_END'; requestId: string; text: string; model: string; provider: string; reasoning?: string; toolCalls?: ToolCall[]; usage?: TokenUsage }
   | { type: 'RUN_ERROR'; requestId: string; code: string; message: string; status: number };
 
-type ChatCommit = { type: 'COMMIT'; userMessage: Message; assistantMessage: Message; manifest: { id: string } };
+type ChatCommit = { type: 'COMMIT'; userMessage: Message; assistantMessage: Message; manifest: ContextManifest };
 
-async function streamMessage(message: string, onEvent: (event: RuntimeStreamEvent) => void): Promise<Omit<ChatCommit, 'type'>> {
-  const response = await fetch('/api/chat/stream', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' }, body: JSON.stringify({ message }) });
+export interface ChatRequestOptions {
+  signal?: AbortSignal;
+  attachmentIds?: string[];
+  generation?: GenerationOptions;
+  operation?: ChatOperation;
+  sourceMessageId?: string;
+}
+
+async function streamMessage(message: string, onEvent: (event: RuntimeStreamEvent) => void, options: ChatRequestOptions = {}): Promise<Omit<ChatCommit, 'type'>> {
+  let response: Response;
+  try {
+    response = await fetch('/api/chat/stream', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' }, body: JSON.stringify({ message, attachmentIds: options.attachmentIds, generation: options.generation, operation: options.operation, sourceMessageId: options.sourceMessageId }), signal: options.signal });
+  } catch (error) {
+    if (options.signal?.aborted) throw new ApiError('生成已停止，本轮未写入历史。', 'GENERATION_STOPPED', 499);
+    throw error;
+  }
   if (!response.ok) {
     const payload = await response.json().catch(() => ({})) as { error?: { code?: string; message?: string } };
     throw new ApiError(payload.error?.message || `请求失败（${response.status}）`, payload.error?.code, response.status);
@@ -51,7 +68,12 @@ async function streamMessage(message: string, onEvent: (event: RuntimeStreamEven
   };
 
   while (true) {
-    const { done, value } = await reader.read();
+    let chunk;
+    try { chunk = await reader.read(); } catch (error) {
+      if (options.signal?.aborted) throw new ApiError('生成已停止，本轮未写入历史。', 'GENERATION_STOPPED', 499);
+      throw error;
+    }
+    const { done, value } = chunk;
     buffer += decoder.decode(value, { stream: !done });
     const frames = buffer.split(/\r?\n\r?\n/);
     buffer = frames.pop() || '';
@@ -61,23 +83,33 @@ async function streamMessage(message: string, onEvent: (event: RuntimeStreamEven
   if (buffer.trim()) consumeFrame(buffer);
   if (streamError) throw new ApiError(streamError.message, streamError.code, streamError.status);
   if (!commit) throw new ApiError('AI 事件流结束前未提交消息。', 'INCOMPLETE_STREAM', 502);
-  const { type: _type, ...result } = commit;
-  return result;
+  return { userMessage: commit.userMessage, assistantMessage: commit.assistantMessage, manifest: commit.manifest };
+}
+
+async function uploadAttachment(file: File): Promise<Attachment> {
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 16_384) binary += String.fromCharCode(...bytes.subarray(offset, offset + 16_384));
+  const result = await request<{ attachment: Attachment }>('/api/attachments', { method: 'POST', body: JSON.stringify({ name: file.name, mimeType: file.type || 'application/octet-stream', dataBase64: btoa(binary) }) });
+  return result.attachment;
 }
 
 export const api = {
   getWorkspace: () => request<{ workspace: WorkspaceSnapshot; provider: ProviderStatus; providerCatalog: ProviderCatalog }>('/api/workspace'),
   setMode: (mode: ContextMode) => request<{ workspace: WorkspaceSnapshot }>('/api/workspace/mode', { method: 'PATCH', body: JSON.stringify({ mode }) }),
   setContextStatus: (id: string, status: ContextStatus) => request<{ workspace: WorkspaceSnapshot }>(`/api/workspace/context/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ status }) }),
+  setContextPin: (id: string, pinned: boolean) => request<{ workspace: WorkspaceSnapshot }>(`/api/workspace/context/${encodeURIComponent(id)}`, { method: 'PATCH', body: JSON.stringify({ pinned }) }),
+  addContextSource: (sourceType: 'node' | 'segment' | 'file', sourceId: string) => request<{ workspace: WorkspaceSnapshot }>('/api/workspace/context', { method: 'POST', body: JSON.stringify({ sourceType, sourceId }) }),
   sendMessage: (message: string) => request<{ userMessage: Message; assistantMessage: Message; manifest: { id: string } }>('/api/chat', { method: 'POST', body: JSON.stringify({ message }) }),
   streamMessage,
-  createBranch: (input: { title: string; anchorText?: string; sourceMessageId?: string; messages?: Array<Pick<Message, 'kind' | 'text' | 'createdAt'>> }) => request<{ workspace: WorkspaceSnapshot }>('/api/nodes', { method: 'POST', body: JSON.stringify(input) }),
+  uploadAttachment,
+  createBranch: (input: { title: string; anchorText?: string; anchorStart?: number; anchorEnd?: number; sourceMessageId?: string; messages?: Array<Pick<Message, 'kind' | 'text' | 'createdAt'>> }) => request<{ workspace: WorkspaceSnapshot }>('/api/nodes', { method: 'POST', body: JSON.stringify(input) }),
   sendTemporaryMessage: (input: { sourceNodeId: string; anchorText: string; message: string; history: Array<Pick<Message, 'kind' | 'text'>> }) => request<{ userMessage: Message; assistantMessage: Message; model: string }>('/api/temp-chat', { method: 'POST', body: JSON.stringify(input) }),
   activateNode: (id: string) => request<{ workspace: WorkspaceSnapshot }>(`/api/nodes/${encodeURIComponent(id)}/activate`, { method: 'POST' }),
   moveNode: (id: string, x: number, y: number) => request<{ workspace: WorkspaceSnapshot }>(`/api/nodes/${encodeURIComponent(id)}/position`, { method: 'PATCH', body: JSON.stringify({ x, y }) }),
   createGraphNode: (input: { title: string; summary?: string; x: number; y: number }) => request<{ workspace: WorkspaceSnapshot }>('/api/graph/nodes', { method: 'POST', body: JSON.stringify(input) }),
   deleteGraphNode: (id: string) => request<{ workspace: WorkspaceSnapshot }>(`/api/graph/nodes/${encodeURIComponent(id)}`, { method: 'DELETE' }),
-  createGraphEdge: (input: { source: string; target: string; relation: 'derived-from' | 'references' | 'merged-into'; label: string }) => request<{ workspace: WorkspaceSnapshot }>('/api/graph/edges', { method: 'POST', body: JSON.stringify(input) }),
+  createGraphEdge: (input: { source: string; target: string; relation: 'derived-from' | 'references' | 'related-to' | 'merged-into'; label: string }) => request<{ workspace: WorkspaceSnapshot }>('/api/graph/edges', { method: 'POST', body: JSON.stringify(input) }),
   deleteGraphEdge: (id: string) => request<{ workspace: WorkspaceSnapshot }>(`/api/graph/edges/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   mergeNode: (id: string, targetNodeId?: string, summary?: string) => request<{ workspace: WorkspaceSnapshot }>(`/api/nodes/${encodeURIComponent(id)}/merge`, { method: 'POST', body: JSON.stringify({ targetNodeId, summary }) }),
   getProviders: () => request<{ catalog: ProviderCatalog; presets: Record<string, ProviderPresetInfo> }>('/api/providers'),

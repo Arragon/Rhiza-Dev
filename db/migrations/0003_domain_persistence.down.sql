@@ -1,0 +1,15 @@
+DROP TABLE IF EXISTS rhiza_audit_events;
+DROP INDEX IF EXISTS rhiza_message_attachments_attachment_idx;
+DROP INDEX IF EXISTS rhiza_anchors_node_idx;
+DROP INDEX IF EXISTS rhiza_edges_target_idx;
+DROP INDEX IF EXISTS rhiza_edges_source_idx;
+DROP INDEX IF EXISTS rhiza_messages_reply_idx;
+DROP INDEX IF EXISTS rhiza_messages_source_idx;
+DROP INDEX IF EXISTS rhiza_messages_segment_idx;
+DROP INDEX IF EXISTS rhiza_segments_node_idx;
+DROP INDEX IF EXISTS rhiza_nodes_source_message_idx;
+DROP INDEX IF EXISTS rhiza_nodes_source_node_idx;
+ALTER TABLE rhiza_messages DROP CONSTRAINT IF EXISTS rhiza_messages_node_event_ordinal_key;
+ALTER TABLE rhiza_messages DROP COLUMN IF EXISTS event_ordinal;
+ALTER TABLE rhiza_nodes DROP COLUMN IF EXISTS anchor_text, DROP COLUMN IF EXISTS source_message_id;
+ALTER TABLE rhiza_projects DROP COLUMN IF EXISTS state;

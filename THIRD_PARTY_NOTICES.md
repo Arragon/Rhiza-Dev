@@ -16,3 +16,9 @@ The LibreChat product UI, Mongo conversation model, Admin Panel and Sandpack/Nod
 - Source: LibreChat `packages/data-provider`
 - Role in Rhiza: model-spec validation, endpoint normalization and file capability policy
 - Declared package license: ISC
+
+## Complete production dependency report
+
+Run `npm run licenses:generate` to reproduce `reports/third-party-licenses.json`
+from the locked production dependency tree. CI runs `npm run licenses:verify` and
+fails when that report is missing or stale.

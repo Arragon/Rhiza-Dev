@@ -1,6 +1,11 @@
 export type View = 'chat' | 'graph' | 'state';
 export type ContextMode = 'Auto' | 'Assisted' | 'Strict';
 export type ContextStatus = 'active' | 'recommended' | 'excluded';
+export type ChatOperation = 'send' | 'retry' | 'regenerate' | 'edit-resend';
+export interface GenerationOptions { temperature: number; topP: number; maxTokens: number }
+export interface TokenUsage { promptTokens: number; completionTokens: number; totalTokens: number; estimated?: boolean }
+export interface ToolCall { id: string; name: string; arguments: string }
+export interface Attachment { id: string; name: string; mimeType: string; size: number; kind: 'file' | 'image'; summary?: string; chunkCount?: number; createdAt: string }
 
 export interface ContextItem {
   id: string;
@@ -10,7 +15,30 @@ export interface ContextItem {
   status: ContextStatus;
   tokens: number;
   reason?: string;
-  selectionMode?: 'CURRENT' | 'USER_SELECTED' | 'AI_RECOMMENDED_ACCEPTED';
+  selectionMode?: 'CURRENT' | 'USER_SELECTED' | 'AI_RECOMMENDED_ACCEPTED' | 'AUTO_RETRIEVED';
+  sourceType?: 'node' | 'segment' | 'file' | 'chunk' | 'reference';
+  sourceId?: string;
+  sourceNodeId?: string;
+  pinned?: boolean;
+  contentVersion?: number;
+  content?: string;
+  score?: number;
+}
+
+export interface Segment { id: string; nodeId: string; ordinal: number; title: string; createdAt: string }
+export interface ManifestContextItem {
+  sourceType: 'node' | 'segment' | 'file' | 'chunk' | 'reference'; sourceId: string; sourceNodeId?: string;
+  title: string; detail: string; role: ContextItem['role'];
+  selectionMode: NonNullable<ContextItem['selectionMode']>; pinned: boolean; reason: string;
+  tokenCount: number; contentVersion: number;
+}
+export interface ContextManifest {
+  id: string; projectId: string; nodeId: string; requestId: string; createdAt: string;
+  mode: ContextMode; contextItemIds: string[]; excludedItemIds: string[];
+  contextItems: ManifestContextItem[]; model: string; provider: string;
+  runtime: 'provider-adapter' | 'librechat'; estimatedTokens: number; generation: GenerationOptions;
+  operation: ChatOperation; sourceMessageId?: string; attachmentIds: string[];
+  planner?: { candidateCount: number; selectedCount: number; elapsedMs: number; fallback: boolean; budget: number; usedTokens: number };
 }
 
 export interface Message {
@@ -21,6 +49,15 @@ export interface Message {
   createdAt: string;
   manifestId?: string;
   pending?: boolean;
+  attachmentIds?: string[];
+  operation?: ChatOperation;
+  sourceMessageId?: string;
+  versionGroupId?: string;
+  version?: number;
+  replyToMessageId?: string;
+  usage?: TokenUsage;
+  reasoning?: string;
+  toolCalls?: ToolCall[];
 }
 
 export interface TemporaryBranch {
@@ -28,12 +65,25 @@ export interface TemporaryBranch {
   sourceNodeId: string;
   sourceMessageId: string;
   anchorText: string;
+  anchorStart?: number;
+  anchorEnd?: number;
   title: string;
   messages: Message[];
 }
 
 export type DiscussionStatus = 'draft' | 'active' | 'resolved' | 'stale' | 'archived';
-export type EdgeRelation = 'derived-from' | 'references' | 'merged-into';
+export type EdgeRelation = 'derived-from' | 'references' | 'related-to' | 'merged-into';
+
+export interface Anchor {
+  id: string;
+  nodeId: string;
+  messageId?: string;
+  segmentId?: string;
+  selectedText?: string;
+  startOffset?: number;
+  endOffset?: number;
+  createdAt: string;
+}
 
 export interface DiscussionNode {
   id: string;
@@ -55,6 +105,7 @@ export interface DiscussionEdge {
   source: string;
   target: string;
   relation: EdgeRelation;
+  anchorId?: string;
   label: string;
   createdAt: string;
 }
@@ -96,13 +147,13 @@ export interface WorkspaceSnapshot {
   mode: ContextMode;
   contextItems: ContextItem[];
   messages: Message[];
+  attachments: Attachment[];
   discussionNodes: DiscussionNode[];
   discussionEdges: DiscussionEdge[];
+  anchors: Anchor[];
   activeNodeId: string;
-  manifests: Array<{
-    id: string; projectId: string; nodeId: string; requestId: string; contextItemIds: string[];
-    excludedItemIds: string[]; model: string; provider: string;
-    runtime: 'provider-adapter' | 'librechat'; estimatedTokens: number;
-  }>;
+  manifests: ContextManifest[];
+  segments: Segment[];
+  fileChunks?: unknown[];
   updatedAt: string;
 }

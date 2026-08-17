@@ -1,4 +1,4 @@
-import type { ContextItem, ContextMode, StoredMessage } from './domain';
+import type { ChatOperation, ContextItem, ContextMode, GenerationOptions, StoredAttachment, StoredMessage, TokenUsage, ToolCall } from './domain';
 
 export interface ModelInfo {
   id: string;
@@ -18,12 +18,20 @@ export interface RuntimeRequest {
   history: StoredMessage[];
   contextItems: ContextItem[];
   mode: ContextMode;
+  attachments?: StoredAttachment[];
+  generation?: GenerationOptions;
+  operation?: ChatOperation;
+  sourceMessageId?: string;
+  signal?: AbortSignal;
 }
 
 export type RuntimeEvent =
   | { type: 'RUN_START'; requestId: string; manifestId: string; model: string; provider: string }
   | { type: 'CONTENT_DELTA'; requestId: string; delta: string }
-  | { type: 'RUN_END'; requestId: string; text: string; model: string; provider: string }
+  | { type: 'REASONING_DELTA'; requestId: string; delta: string }
+  | { type: 'TOOL_CALL_DELTA'; requestId: string; toolCall: ToolCall }
+  | { type: 'USAGE'; requestId: string; usage: TokenUsage }
+  | { type: 'RUN_END'; requestId: string; text: string; model: string; provider: string; reasoning?: string; toolCalls?: ToolCall[]; usage?: TokenUsage }
   | { type: 'RUN_ERROR'; requestId: string; code: string; message: string; status: number };
 
 export interface AIRuntime {
@@ -36,6 +44,9 @@ export interface RuntimeResult {
   text: string;
   model: string;
   provider: string;
+  reasoning?: string;
+  toolCalls?: ToolCall[];
+  usage: TokenUsage;
 }
 
 export class RuntimeExecutionError extends Error {
@@ -48,7 +59,7 @@ export class RuntimeExecutionError extends Error {
 export async function collectRuntimeResult(runtime: AIRuntime, request: RuntimeRequest): Promise<RuntimeResult> {
   let result: RuntimeResult | undefined;
   for await (const event of runtime.generate(request)) {
-    if (event.type === 'RUN_END') result = { text: event.text, model: event.model, provider: event.provider };
+    if (event.type === 'RUN_END') result = { text: event.text, model: event.model, provider: event.provider, reasoning: event.reasoning, toolCalls: event.toolCalls, usage: event.usage || { promptTokens: 0, completionTokens: Math.ceil(event.text.length / 4), totalTokens: Math.ceil(event.text.length / 4), estimated: true } };
     if (event.type === 'RUN_ERROR') {
       throw new RuntimeExecutionError(event.message, event.status, event.code);
     }

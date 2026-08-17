@@ -21,6 +21,7 @@ const gates = join(root, 'docs/architecture-gates');
 const fixturesDirectory = join(gates, 'fixtures');
 const update = process.argv.includes('--update');
 const writeEvidence = process.argv.includes('--write-evidence');
+const writeObservation = process.argv.includes('--write-observation');
 const baselineCommit = 'b29d94fb034678e0c9d5660848e92e995311d4da';
 const baselineTag = 'pre-0815-engineering-baseline';
 
@@ -56,6 +57,8 @@ type Metric = {
   p99: number;
   max: number;
 };
+
+type ChecksumRecords = Record<string, { algorithm: 'sha256'; value: string }>;
 
 type PerformanceProfile = {
   profileVersion: '1.0.0';
@@ -122,14 +125,22 @@ function assertFixtureHygiene(content: string, fixturePath: string): void {
     /(?:Bearer\s+|sk-)[A-Za-z0-9_-]{8,}/i,
     /(?:AKIA|AIza|ghp_|xox[baprs]-)[A-Za-z0-9_-]{8,}/,
     /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
-    /file:\/\//i,
-    /(?:^|[\\/])\.\.(?:[\\/]|$)/m,
-    /(?:\/Users\/|\/home\/|\/private(?:\/|$)|\/tmp(?:\/|$)|\/etc(?:\/|$)|[A-Z]:\\|\\\\[^\\]+\\[^\\]+)/,
-    /(?:^|["'])~\//m,
   ];
   if (forbidden.some(pattern => pattern.test(content))) {
-    fail(`${fixturePath} contains a secret, absolute path, file URL, or traversal`);
+    fail(`${fixturePath} contains a secret or credential`);
   }
+  const inspectStrings = (value: unknown): void => {
+    if (typeof value === 'string') {
+      if (/^(?:file:\/\/|\/|[A-Za-z]:[\\/]|\\\\|~[\\/])/i.test(value)
+        || value.split(/[\\/]/).includes('..')) {
+        fail(`${fixturePath} contains an absolute path, file URL, home path, or traversal`);
+      }
+      return;
+    }
+    if (Array.isArray(value)) value.forEach(inspectStrings);
+    else if (value && typeof value === 'object') Object.values(value as JsonObject).forEach(inspectStrings);
+  };
+  inspectStrings(JSON.parse(content));
 }
 
 async function loadRegisteredFixture<T>(registry: FixtureRegistry, id: string): Promise<T> {
@@ -419,8 +430,45 @@ function verifyBaselineTag(): {
   }
 }
 
+function currentCommit(): string {
+  return execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim();
+}
+
+function assertArchivedEvidenceCommit(commit: unknown): void {
+  if (typeof commit !== 'string' || !/^[a-f0-9]{40}$/.test(commit)) {
+    fail('archived evidence commit is not a full Git commit SHA');
+  }
+  const recordedCommit = commit as string;
+  try {
+    execFileSync('git', ['cat-file', '-e', `${recordedCommit}^{commit}`], { cwd: root, stdio: 'ignore' });
+  } catch {
+    fail(`archived evidence commit does not exist locally: ${commit}`);
+  }
+  try {
+    execFileSync('git', ['merge-base', '--is-ancestor', recordedCommit, 'HEAD'], { cwd: root, stdio: 'ignore' });
+  } catch {
+    fail(`archived evidence commit is not an ancestor of HEAD: ${commit}`);
+  }
+}
+
+function checksumRecords(checksums: Record<string, string>): ChecksumRecords {
+  return Object.fromEntries(Object.entries(checksums).map(([id, digest]) => [
+    id,
+    { algorithm: 'sha256', value: digest.replace(/^sha256:/, '') },
+  ]));
+}
+
+function observationOutputPath(): string {
+  const argument = process.argv.find(value => value.startsWith('--observation-path='));
+  if (argument) return resolve(root, argument.slice('--observation-path='.length));
+  const runnerTemp = process.env.RUNNER_TEMP ?? fail('G0 observation requires RUNNER_TEMP or --observation-path=<path>');
+  return join(runnerTemp, 'g0-evidence.json');
+}
+
 async function run(): Promise<void> {
   const startedAt = new Date().toISOString();
+  if (update && (writeEvidence || writeObservation)) fail('--update cannot be combined with evidence output');
+  if (writeEvidence && writeObservation) fail('choose either archived evidence or CI observation output');
   if (writeEvidence) {
     execFileSync('pnpm', ['run', 'test:g0'], { cwd: root, stdio: 'inherit' });
   }
@@ -448,12 +496,10 @@ async function run(): Promise<void> {
 
   if (!writeEvidence) {
     if (!update) {
-      try {
       const existingEvidence = await readJson<JsonObject>(join(gates, 'G0/evidence.json'));
       assertValid(validator, 'https://rhiza.dev/architecture-gates/evidence-manifest/1.0.0', existingEvidence);
       if (existingEvidence.fixture_digest !== fixture.digest) fail('archived evidence fixture_digest drift');
-      const expectedCommit = execFileSync('git', ['rev-parse', 'HEAD^'], { cwd: root, encoding: 'utf8' }).trim();
-      if (existingEvidence.commit !== expectedCommit) fail(`archived evidence commit must equal HEAD^ (${expectedCommit})`);
+      assertArchivedEvidenceCommit(existingEvidence.commit);
       const checksums = existingEvidence.checksums as JsonObject;
       const expectedChecksums = { ...snapshotChecksums, 'fixture-registry.json': fixture.digest, 'performance-profile.json': performanceProfileChecksum };
       for (const [path, digest] of Object.entries(expectedChecksums)) {
@@ -477,26 +523,61 @@ async function run(): Promise<void> {
       for (const metric of Object.values(recorded)) {
         if (metric.warmup_count !== 20 || metric.sample_count !== 200 || metric.failures !== 0 || metric.timeouts !== 0 || metric.drops !== 0) fail(`archived evidence metric counts drift: ${metric.metric}`);
       }
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
-      }
     }
+    if (!writeObservation) return;
+  }
+  const inputChecksums = { ...snapshotChecksums, 'fixture-registry.json': fixture.digest, 'performance-profile.json': performanceProfileChecksum };
+  const observedMetrics = Object.fromEntries(metrics.map(metric => [metric.metric, metric]));
+  const actualEnvironment = {
+    node: process.version,
+    os: `${platform()} ${release()}`,
+    cpu: cpus()[0]?.model ?? 'unknown',
+    memory_bytes: totalmem(),
+    store_adapter: 'json',
+  };
+  if (writeObservation) {
+    const commit = currentCommit();
+    const githubSha = process.env.GITHUB_SHA ?? commit;
+    if (githubSha !== commit) fail(`GitHub SHA does not match checked-out commit (${githubSha} != ${commit})`);
+    const observation = {
+      $schema: 'https://rhiza.dev/architecture-gates/ci-observation/1.0.0',
+      schema_version: '1.0.0',
+      gate_id: 'G0',
+      commit,
+      provenance: {
+        ci: process.env.GITHUB_ACTIONS === 'true' ? 'github-actions' : 'local',
+        repository: process.env.GITHUB_REPOSITORY ?? null,
+        workflow: process.env.GITHUB_WORKFLOW ?? null,
+        run_id: process.env.GITHUB_RUN_ID ?? null,
+        run_attempt: process.env.GITHUB_RUN_ATTEMPT ?? null,
+        event_name: process.env.GITHUB_EVENT_NAME ?? null,
+        ref: process.env.GITHUB_REF ?? null,
+        sha: githubSha,
+      },
+      command: 'pnpm g0:observe',
+      environment_profile: { declared: profile, actual: actualEnvironment },
+      observed_metrics: observedMetrics,
+      checksums: checksumRecords(inputChecksums),
+      started_at: startedAt,
+      completed_at: new Date().toISOString(),
+      result: 'pass',
+    };
+    assertValid(validator, 'https://rhiza.dev/architecture-gates/ci-observation/1.0.0', observation);
+    const output = observationOutputPath();
+    await mkdir(resolve(output, '..'), { recursive: true });
+    await writeFile(output, `${JSON.stringify(observation, null, 2)}\n`);
+    console.log(`wrote CI observation ${output}`);
     return;
   }
   const evidenceBaseline = baseline ?? verifyBaselineTag();
-  const observedMetrics = Object.fromEntries(metrics.map(metric => [metric.metric, metric]));
-  const checksumRecords = Object.fromEntries(
-    Object.entries({ ...snapshotChecksums, 'fixture-registry.json': fixture.digest, 'performance-profile.json': performanceProfileChecksum }).map(([id, digest]) => [
-      id,
-      { algorithm: 'sha256', value: digest.replace(/^sha256:/, '') },
-    ]),
-  );
+  const archivedObservedMetrics = observedMetrics;
+  const archivedChecksumRecords = checksumRecords(inputChecksums);
   const manifest = {
     $schema: 'https://rhiza.dev/architecture-gates/evidence-manifest/1.0.0',
     schema_version: '1.0.0',
     gate_id: 'G0',
     architecture_version: '0818-v3.0',
-    commit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim(),
+    commit: currentCommit(),
     baseline: evidenceBaseline,
     fixture_id: 'g0-fixture-registry-v1',
     fixture_digest: fixture.digest,
@@ -504,11 +585,7 @@ async function run(): Promise<void> {
     environment_profile: {
       declared: profile,
       actual: {
-        node: process.version,
-        os: `${platform()} ${release()}`,
-        cpu: cpus()[0]?.model ?? 'unknown',
-        memory_bytes: totalmem(),
-        store_adapter: 'json',
+        ...actualEnvironment,
       },
     },
     thresholds: {
@@ -519,7 +596,7 @@ async function run(): Promise<void> {
       timeouts: 0,
       drops: 0,
     },
-    observed_metrics: observedMetrics,
+    observed_metrics: archivedObservedMetrics,
     absolute_metrics: Object.fromEntries(metrics.map(metric => [metric.metric, {
       p50: metric.p50, p95: metric.p95, p99: metric.p99, max: metric.max,
     }])),
@@ -527,8 +604,8 @@ async function run(): Promise<void> {
       reason: 'G0 is the initial baseline; later gates compare against these absolute metrics.',
       metrics: Object.fromEntries(metrics.map(metric => [metric.metric, null])),
     },
-    checksums: checksumRecords,
-    artifact_descriptors: Object.keys(checksumRecords).map((path, index) => ({
+    checksums: archivedChecksumRecords,
+    artifact_descriptors: Object.keys(archivedChecksumRecords).map((path, index) => ({
       artifact_id: `g0-artifact-${index + 1}`,
       path,
       media_type: 'application/json',

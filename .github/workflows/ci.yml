@@ -9,7 +9,7 @@ permissions:
 
 jobs:
   m2-acceptance:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       postgres:
@@ -32,12 +32,13 @@ jobs:
         with:
           fetch-depth: 0
           fetch-tags: true
+          persist-credentials: false
       - uses: pnpm/action-setup@v4
         with:
           version: 11.19.0
       - uses: actions/setup-node@v4
         with:
-          node-version: 24
+          node-version: 24.19.0
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm run lint
@@ -46,4 +47,13 @@ jobs:
       - run: pnpm run test:e2e
       - run: pnpm run licenses:verify
       - run: pnpm run verify:g0
+      - name: Capture G0 CI observation
+        run: pnpm run g0:observe
+      - name: Upload G0 CI observation
+        uses: actions/upload-artifact@v4
+        with:
+          name: g0-evidence-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/g0-evidence.json
+          if-no-files-found: error
+          retention-days: 90
       - run: pnpm run build

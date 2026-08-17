@@ -21,18 +21,29 @@ afterEach(async () => {
   await Promise.all(directories.splice(0).map(directory => rm(directory, { recursive: true, force: true })));
 });
 
-async function fixture<T>(name: string): Promise<T> {
-  return JSON.parse(await readFile(join(root, 'docs/architecture-gates/fixtures', name), 'utf8')) as T;
+type FixtureRegistry = { fixtures: Array<{ id: string; path: string }> };
+
+async function registeredFixtures(): Promise<Map<string, unknown>> {
+  const registry = JSON.parse(await readFile(join(root, 'docs/architecture-gates/fixture-registry.json'), 'utf8')) as FixtureRegistry;
+  const expectedIds = ['g0-empty-workspace-v1', 'g0-branch-context-provider-v1', 'g0-error-cancel-recovery-v1'];
+  expect(registry.fixtures.map(item => item.id)).toEqual(expect.arrayContaining(expectedIds));
+  return new Map(await Promise.all(registry.fixtures
+    .filter(item => expectedIds.includes(item.id))
+    .map(async item => [item.id, JSON.parse(await readFile(join(root, 'docs/architecture-gates', item.path), 'utf8'))] as const)));
 }
 
 it('loads registered workspace and error-retry fixtures to characterize route and recovery semantics', async () => {
-  const workspaceFixture = await fixture<{ workspace: WorkspaceData }>('branch-context-provider.json');
-  const scenarioFixture = await fixture<{ scenario: { workspaceFixtureId: string; operations: Array<{ operation: string; expected: string }> } }>('error-cancel-recovery.json');
+  const fixtures = await registeredFixtures();
+  const emptyWorkspaceFixture = fixtures.get('g0-empty-workspace-v1') as { workspace: WorkspaceData };
+  const workspaceFixture = fixtures.get('g0-branch-context-provider-v1') as { workspace: WorkspaceData };
+  const scenarioFixture = fixtures.get('g0-error-cancel-recovery-v1') as { scenario: { workspaceFixtureId: string; operations: Array<{ operation: string; expected: string }> } };
+  expect(emptyWorkspaceFixture.workspace.discussionNodes).toHaveLength(1);
+  expect(emptyWorkspaceFixture.workspace.discussionNodes[0]?.kind).toBe('main');
   expect(scenarioFixture.scenario.workspaceFixtureId).toBe('g0-branch-context-provider-v1');
   const directory = await mkdtemp(join(tmpdir(), 'rhiza-g0-fixture-'));
   directories.push(directory);
   const store = new WorkspaceStore(join(directory, 'workspace.json'));
-  await store.update(() => structuredClone(workspaceFixture.workspace));
+  await store.update(() => structuredClone(emptyWorkspaceFixture.workspace));
   let attempts = 0;
   const runtime: AIRuntime = {
     kind: 'provider-adapter',
@@ -48,8 +59,13 @@ it('loads registered workspace and error-retry fixtures to characterize route an
   const server = createServer(createApp(store, provider, false, runtime));
   await new Promise<void>((resolveListen, rejectListen) => server.listen(0, '127.0.0.1', resolveListen).once('error', rejectListen));
   servers.push(server);
+  const empty = await request(server).get('/api/workspace').expect(200);
+  expect(empty.body.workspace.projectId).toBe(emptyWorkspaceFixture.workspace.projectId);
+  expect(empty.body.workspace.discussionNodes).toHaveLength(1);
+  await store.update(() => structuredClone(workspaceFixture.workspace));
   const before = await request(server).get('/api/workspace').expect(200);
   expect(before.body.workspace.activeNodeId).toBe('fixture-main');
+  expect(before.body.workspace.discussionNodes).toHaveLength(2);
   await request(server).post('/api/chat').send({ message: 'fixture retry route' }).expect(504);
   const failed = await request(server).get('/api/workspace').expect(200);
   expect(failed.body.workspace.messages).toEqual(before.body.workspace.messages);

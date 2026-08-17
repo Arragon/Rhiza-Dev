@@ -25,6 +25,7 @@
     "test:g0": "tsx scripts/architecture-gates/run-characterization.ts",
     "benchmark:g0": "tsx scripts/architecture-gates/verify-g0.ts",
     "g0:evidence": "tsx scripts/architecture-gates/verify-g0.ts --write-evidence",
+    "g0:observe": "tsx scripts/architecture-gates/verify-g0.ts --write-observation",
     "verify:g0": "pnpm run test:g0 && pnpm run benchmark:g0",
     "verify:m0": "pnpm run lint && pnpm run typecheck && pnpm run test:unit && pnpm run test:e2e && pnpm run licenses:verify && pnpm run build",
     "verify:m1": "pnpm run verify:m0",

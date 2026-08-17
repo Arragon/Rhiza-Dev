@@ -29,10 +29,15 @@ absolute/file paths (including private, tmp, etc, UNC, and home paths),
 traversal, unregistered fixtures, and oversized content.
 Locally generated evidence records the actual Node, OS, CPU, memory, and store
 adapter alongside the declared CI profile. The committed local result remains
-supplemental until the same `verify:g0` command is green in CI.
+supplemental until the same `verify:g0` command is green in CI. CI additionally
+runs `pnpm g0:observe`, which writes a schema-validated, untracked observation
+to `$RUNNER_TEMP/g0-evidence.json` and uploads it as an artifact. It records
+the checked-out SHA, GitHub Actions provenance, observed environment, metrics,
+and checksums without replacing the archived baseline evidence.
 
 On ordinary verification, the baseline tag must exist as an annotated tag and
-peel to `b29d94f`. The archived evidence must describe `HEAD^`, recompute every
-fixture, snapshot, and performance-profile checksum, resolve every artifact
+peel to `b29d94f`. The archived evidence file is required: its recorded commit
+must exist as a Git commit and be an ancestor of `HEAD`. Verification recomputes every
+fixture, snapshot, and performance-profile checksum, resolves every artifact
 reference, and retain 20 warm-ups, 200 samples, and zero recorded errors. Raw
 latency values are observational and may differ between environments.

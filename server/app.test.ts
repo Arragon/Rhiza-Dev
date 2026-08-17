@@ -122,6 +122,32 @@ describe('Rhiza API', () => {
     expect(after.body.workspace.manifests).toEqual([]);
   });
 
+  it('keeps a failed stream uncommitted and retries without overwriting history', async () => {
+    let attempts = 0;
+    const retryRuntime: AIRuntime = {
+      kind: 'provider-adapter',
+      listModels: async () => [{ id: 'model-1', provider: 'Retry Fixture', model: 'retry-model', displayName: 'Retry', active: true }],
+      async *generate(input) {
+        attempts += 1;
+        yield { type: 'RUN_START', requestId: input.requestId, manifestId: input.manifestId, model: 'retry-model', provider: 'Retry Fixture' };
+        if (attempts === 1) { yield { type: 'RUN_ERROR', requestId: input.requestId, code: 'UPSTREAM_TIMEOUT', message: 'synthetic timeout', status: 504 }; return; }
+        yield { type: 'CONTENT_DELTA', requestId: input.requestId, delta: '重试完成' };
+        yield { type: 'RUN_END', requestId: input.requestId, text: '重试完成', model: 'retry-model', provider: 'Retry Fixture' };
+      },
+    };
+    const { app } = await testApp(retryRuntime);
+    await request(app).post('/api/chat').send({ message: '需要重试' }).expect(504);
+    expect((await request(app).get('/api/workspace')).body.workspace.manifests).toEqual([]);
+    const retried = await request(app).post('/api/chat').send({ message: '需要重试', operation: 'retry' }).expect(201);
+    expect(retried.body.userMessage).toMatchObject({ text: '需要重试', operation: 'retry' });
+    expect(retried.body.assistantMessage).toMatchObject({ text: '重试完成', operation: 'retry' });
+    expect(retried.body.manifest).toMatchObject({ operation: 'retry' });
+    const after = await request(app).get('/api/workspace').expect(200);
+    expect(after.body.workspace.messages.slice(-2).map((message: { text: string }) => message.text)).toEqual(['需要重试', '重试完成']);
+    expect(after.body.workspace.messages).toHaveLength(4);
+    expect(after.body.workspace.manifests).toHaveLength(1);
+  });
+
   it('validates client input', async () => {
     const { app } = await testApp();
     await request(app).post('/api/chat').send({ message: '   ' }).expect(400);

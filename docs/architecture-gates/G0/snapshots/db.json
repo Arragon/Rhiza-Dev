@@ -1,0 +1,11 @@
+{
+  "version": "legacy-db-schema-snapshot-1.0.0",
+  "migrations": {
+    "db/migrations/0001_rhiza_core.down.sql": "sha256:7692f7c7146f459c85953598786a9485c819bcdd46b78591127c99351200b57a",
+    "db/migrations/0001_rhiza_core.up.sql": "sha256:722eadbc8738e1b99033248163588027e10d586fd168f7184094443606f49dc0",
+    "db/migrations/0002_chat_parity.down.sql": "sha256:e934775b7a4ccb81863115f19ad80b2f30d58796ea9363d9bf50066348bc2c95",
+    "db/migrations/0002_chat_parity.up.sql": "sha256:1d784fd0d21356c88b7c8d21d6f415fad8295b5d0c171b5b09b0b18548fce6e0",
+    "db/migrations/0003_domain_persistence.down.sql": "sha256:a4856570f1b41a7a0e54bf8055bf7878abd525e8878ca03852ac72335142f8a3",
+    "db/migrations/0003_domain_persistence.up.sql": "sha256:21631bcb2a9b620378d89c9f93cf5c31c6a4327568945f775caccabd13989276"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "version": "legacy-api-snapshot-1.0.0",
+  "routes": [
+    "DELETE /api/graph/edges/:id",
+    "DELETE /api/graph/nodes/:id",
+    "GET /api/health",
+    "GET /api/providers",
+    "GET /api/workspace",
+    "PATCH /api/models/:id",
+    "PATCH /api/nodes/:id/position",
+    "PATCH /api/nodes/:id/status",
+    "PATCH /api/workspace/context/:id",
+    "PATCH /api/workspace/mode",
+    "POST /api/attachments",
+    "POST /api/chat",
+    "POST /api/chat/stream",
+    "POST /api/graph/edges",
+    "POST /api/graph/nodes",
+    "POST /api/models/:id/select",
+    "POST /api/nodes",
+    "POST /api/nodes/:id/activate",
+    "POST /api/nodes/:id/merge",
+    "POST /api/nodes/:id/segments",
+    "POST /api/providers",
+    "POST /api/providers/:id/discover",
+    "POST /api/temp-chat",
+    "POST /api/workspace/context"
+  ],
+  "sseChannels": [
+    "runtime",
+    "commit"
+  ],
+  "sseEventTypes": [
+    "CONTENT_DELTA",
+    "REASONING_DELTA",
+    "RUN_END",
+    "RUN_ERROR",
+    "RUN_START",
+    "TOOL_CALL_DELTA",
+    "USAGE"
+  ]
+}

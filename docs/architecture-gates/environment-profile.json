@@ -1,0 +1,10 @@
+{
+  "id": "ci-node24-linux-json-store-v1",
+  "runtime": "Node.js 24.x",
+  "os": "ubuntu-latest",
+  "store_adapter": "json fixture / no external network",
+  "warmup_count": 20,
+  "sample_count": 200,
+  "concurrency": 1,
+  "external_network": false
+}

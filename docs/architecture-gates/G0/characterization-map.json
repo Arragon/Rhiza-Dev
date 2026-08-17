@@ -1,0 +1,17 @@
+{
+  "version": "1.0.0",
+  "gate": "G0",
+  "coverage": [
+    { "behavior": "chat", "file": "server/app.test.ts", "title": "calls the provider and stores messages with a manifest" },
+    { "behavior": "branch", "file": "server/app.test.ts", "title": "creates, moves and merges a formal discussion branch" },
+    { "behavior": "edit/resend", "file": "server/app.test.ts", "title": "creates traceable Edit & Resend and Regenerate event versions without overwriting history" },
+    { "behavior": "regenerate", "file": "server/app.test.ts", "title": "preserves pinned context over budget and freezes a new immutable manifest for Regenerate" },
+    { "behavior": "Stop e2e", "file": "e2e/provider-stream.e2e.test.ts", "title": "aborts the upstream provider on Stop and leaves persisted history unchanged" },
+    { "behavior": "backend retry", "file": "server/app.test.ts", "title": "keeps a failed stream uncommitted and retries without overwriting history" },
+    { "behavior": "UI retry", "file": "src/App.test.tsx", "title": "shows an explicit Retry action after a failed request" },
+    { "behavior": "file", "file": "server/app.test.ts", "title": "uploads a text attachment, displays its metadata and includes its content in the provider call" },
+    { "behavior": "archive/restore", "file": "server/app.test.ts", "title": "creates retrieval segments and keeps archive semantics distinct from deletion" },
+    { "behavior": "merge/delete", "file": "server/app.test.ts", "title": "creates and deletes graph nodes and semantic edges" },
+    { "behavior": "provider selection", "file": "server/app.test.ts", "title": "runs three provider profiles through the same Runtime contract" }
+  ]
+}

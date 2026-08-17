@@ -1,0 +1,12 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rhiza.dev/architecture-gates/environment-profile/1.0.0",
+  "type": "object",
+  "required": ["id", "runtime", "os", "store_adapter", "warmup_count", "sample_count", "concurrency", "external_network"],
+  "properties": {
+    "id": { "type": "string" }, "runtime": { "type": "string" }, "os": { "type": "string" },
+    "store_adapter": { "type": "string" }, "warmup_count": { "const": 20 }, "sample_count": { "const": 200 },
+    "concurrency": { "const": 1 }, "external_network": { "const": false }
+  },
+  "additionalProperties": false
+}

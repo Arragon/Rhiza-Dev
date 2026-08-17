@@ -1,0 +1,51 @@
+{
+  "schema_version": "1.0.0",
+  "schema_id": "https://rhiza.dev/architecture-gates/fixture-registry/1.0.0",
+  "provenance": "synthetic",
+  "canonicalization_version": "jcs-like-key-sort-v1",
+  "total_size_bytes": 3622,
+  "fixtures": [
+    {
+      "id": "g0-empty-workspace-v1",
+      "path": "fixtures/empty-workspace.json",
+      "schema_id": "https://rhiza.dev/architecture-gates/workspace-fixture/1.0.0",
+      "digest": "sha256:83c5013ea028cb09a422c9af531383d024097146a69e3a552a93d61842f28beb",
+      "size_bytes": 744,
+      "scenario_ids": [
+        "empty-workspace"
+      ],
+      "purpose": "empty workspace"
+    },
+    {
+      "id": "g0-branch-context-provider-v1",
+      "path": "fixtures/branch-context-provider.json",
+      "schema_id": "https://rhiza.dev/architecture-gates/workspace-fixture/1.0.0",
+      "digest": "sha256:56091cb01beaa5079dc99b0419678e4cfe64a24ff9970b2e6ca637b1250dd853",
+      "size_bytes": 2347,
+      "scenario_ids": [
+        "chat",
+        "branch",
+        "context",
+        "provider-selection",
+        "file",
+        "archive-restore",
+        "merge-delete"
+      ],
+      "purpose": "branch, context, provider, file"
+    },
+    {
+      "id": "g0-error-cancel-recovery-v1",
+      "path": "fixtures/error-cancel-recovery.json",
+      "schema_id": "https://rhiza.dev/architecture-gates/scenario-fixture/1.0.0",
+      "digest": "sha256:5a448cdf4b0411e637a57ba0d9e1321f3c19ad0a2b1d96c5e5b542e011ee27db",
+      "size_bytes": 531,
+      "scenario_ids": [
+        "error",
+        "stop",
+        "retry",
+        "recovery"
+      ],
+      "purpose": "error, cancel, retry recovery"
+    }
+  ]
+}

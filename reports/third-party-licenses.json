@@ -20,18 +20,6 @@
       "publisher": "Shahar Soel",
       "copyright": null
     },
-    "@esbuild/darwin-arm64@0.27.7": {
-      "licenses": "MIT",
-      "repository": "https://github.com/evanw/esbuild",
-      "publisher": null,
-      "copyright": null
-    },
-    "@esbuild/darwin-arm64@0.28.2": {
-      "licenses": "MIT",
-      "repository": "https://github.com/evanw/esbuild",
-      "publisher": null,
-      "copyright": null
-    },
     "@fontsource/dm-mono@5.3.0": {
       "licenses": "OFL-1.1",
       "repository": "https://github.com/fontsource/font-files",
@@ -72,12 +60,6 @@
       "licenses": "MIT",
       "repository": "https://github.com/oxc-project/oxc",
       "publisher": "Boshen and oxc contributors",
-      "copyright": null
-    },
-    "@rolldown/binding-darwin-arm64@1.2.4": {
-      "licenses": "MIT",
-      "repository": "https://github.com/rolldown/rolldown",
-      "publisher": null,
       "copyright": null
     },
     "@rolldown/pluginutils@1.0.1": {
@@ -339,12 +321,6 @@
       "copyright": null
     },
     "@types/react@19.2.18": {
-      "licenses": "MIT",
-      "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped",
-      "publisher": null,
-      "copyright": null
-    },
-    "@types/trusted-types@2.0.7": {
       "licenses": "MIT",
       "repository": "https://github.com/DefinitelyTyped/DefinitelyTyped",
       "publisher": null,
@@ -980,12 +956,6 @@
       "publisher": "TJ Holowaychuk",
       "copyright": null
     },
-    "fsevents@2.3.3": {
-      "licenses": "MIT",
-      "repository": "https://github.com/fsevents/fsevents",
-      "publisher": null,
-      "copyright": null
-    },
     "function-bind@1.1.2": {
       "licenses": "MIT",
       "repository": "https://github.com/Raynos/function-bind",
@@ -1235,12 +1205,6 @@
     "librechat-data-provider@0.8.509": {
       "licenses": "ISC",
       "repository": "https://github.com/danny-avila/LibreChat",
-      "publisher": null,
-      "copyright": null
-    },
-    "lightningcss-darwin-arm64@1.33.0": {
-      "licenses": "MPL-2.0",
-      "repository": "https://github.com/parcel-bundler/lightningcss",
       "publisher": null,
       "copyright": null
     },
@@ -1667,12 +1631,6 @@
     "path-to-regexp@8.4.2": {
       "licenses": "MIT",
       "repository": "https://github.com/pillarjs/path-to-regexp",
-      "publisher": null,
-      "copyright": null
-    },
-    "pg-cloudflare@1.4.0": {
-      "licenses": "MIT",
-      "repository": "https://github.com/brianc/node-postgres",
       "publisher": null,
       "copyright": null
     },

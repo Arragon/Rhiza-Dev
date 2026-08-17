@@ -3,7 +3,7 @@ import reactHooks from 'eslint-plugin-react-hooks';
 import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
-  { ignores: ['dist/**', 'dist-server/**', 'node_modules/**', 'reports/**', 'var/**'] },
+  { ignores: ['dist/**', 'dist-server/**', 'node_modules/**', 'reports/**', 'var/**', 'Rhiza-Dev-codex-rhiza-librechat-runtime/**'] },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   reactHooks.configs.flat.recommended,

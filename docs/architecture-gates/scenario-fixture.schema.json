@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rhiza.dev/architecture-gates/scenario-fixture/1.0.0",
+  "type": "object",
+  "required": ["scenarioVersion", "id", "scenario"],
+  "additionalProperties": false,
+  "properties": {
+    "scenarioVersion": { "const": "1.0.0" }, "id": { "type": "string" },
+    "scenario": {
+      "type": "object", "required": ["workspaceFixtureId", "operations", "recovery"], "additionalProperties": false,
+      "properties": {
+        "workspaceFixtureId": { "type": "string" },
+        "operations": {
+          "type": "array", "minItems": 3,
+          "items": {
+            "type": "object", "required": ["id", "operation", "expected"], "additionalProperties": false,
+            "properties": {
+              "id": { "type": "string" }, "operation": { "enum": ["send", "retry", "stop"] },
+              "expected": { "enum": ["committed", "uncommitted"] }
+            }
+          }
+        },
+        "recovery": {
+          "type": "object", "required": ["command", "expectedCanonicalChecksum"], "additionalProperties": false,
+          "properties": { "command": { "type": "string" }, "expectedCanonicalChecksum": { "type": "string" } }
+        }
+      }
+    }
+  }
+}

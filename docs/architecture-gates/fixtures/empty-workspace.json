@@ -1,0 +1,10 @@
+{
+  "fixtureVersion": "1.0.0",
+  "id": "g0-empty-workspace-v1",
+  "workspace": {
+    "projectId": "fixture-empty-project", "projectTitle": "Synthetic Empty Workspace", "nodeId": "fixture-empty-main", "mode": "Assisted",
+    "contextItems": [], "messages": [], "attachments": [], "fileChunks": [],
+    "discussionNodes": [{ "id": "fixture-empty-main", "title": "Synthetic Main", "summary": "Synthetic empty workspace main node.", "status": "active", "kind": "main", "x": 0, "y": 0, "createdAt": "2026-08-18T00:00:00.000Z", "updatedAt": "2026-08-18T00:00:00.000Z" }],
+    "discussionEdges": [], "anchors": [], "activeNodeId": "fixture-empty-main", "manifests": [], "segments": [], "auditEvents": [], "updatedAt": "2026-08-18T00:00:00.000Z"
+  }
+}

@@ -1,0 +1,15 @@
+{
+  "fixtureVersion": "1.0.0",
+  "id": "g0-branch-context-provider-v1",
+  "workspace": {
+    "projectId": "fixture-branch-project", "projectTitle": "Synthetic Branch Context Provider", "nodeId": "fixture-main", "mode": "Assisted",
+    "contextItems": [{ "id": "fixture-context-main", "title": "Synthetic main context", "detail": "Synthetic context item.", "role": "Constraint", "status": "active", "tokens": 20, "selectionMode": "CURRENT", "sourceType": "node", "sourceId": "fixture-main", "sourceNodeId": "fixture-main", "pinned": false, "contentVersion": 1, "reason": "Synthetic current node." }],
+    "messages": [{ "id": "fixture-message-1", "nodeId": "fixture-main", "kind": "user", "text": "Synthetic baseline prompt.", "createdAt": "2026-08-18T00:00:01.000Z" }],
+    "attachments": [{ "id": "fixture-file-1", "name": "fixture.txt", "mimeType": "text/plain", "size": 26, "kind": "file", "extractedText": "Synthetic fixture content.", "chunkCount": 1, "createdAt": "2026-08-18T00:00:02.000Z" }],
+    "fileChunks": [{ "id": "fixture-chunk-1", "attachmentId": "fixture-file-1", "ordinal": 0, "text": "Synthetic fixture content.", "startOffset": 0, "endOffset": 26, "tokens": 4, "terms": ["synthetic", "fixture"], "embedding": [] }],
+    "discussionNodes": [{ "id": "fixture-main", "title": "Synthetic Main", "summary": "Synthetic baseline node.", "status": "active", "kind": "main", "x": 0, "y": 0, "createdAt": "2026-08-18T00:00:00.000Z", "updatedAt": "2026-08-18T00:00:00.000Z" }, { "id": "fixture-branch", "title": "Synthetic Branch", "summary": "Synthetic branch node.", "status": "active", "kind": "branch", "sourceNodeId": "fixture-main", "sourceMessageId": "fixture-message-1", "x": 100, "y": 50, "createdAt": "2026-08-18T00:00:03.000Z", "updatedAt": "2026-08-18T00:00:03.000Z" }],
+    "discussionEdges": [{ "id": "fixture-edge-1", "source": "fixture-main", "target": "fixture-branch", "relation": "derived-from", "label": "Synthetic derivation", "createdAt": "2026-08-18T00:00:03.000Z" }],
+    "anchors": [{ "id": "fixture-anchor-1", "nodeId": "fixture-main", "messageId": "fixture-message-1", "selectedText": "baseline", "startOffset": 10, "endOffset": 18, "createdAt": "2026-08-18T00:00:03.000Z" }],
+    "activeNodeId": "fixture-main", "manifests": [], "segments": [], "auditEvents": [], "updatedAt": "2026-08-18T00:00:03.000Z"
+  }
+}

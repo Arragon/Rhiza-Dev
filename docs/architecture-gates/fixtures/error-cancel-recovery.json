@@ -1,0 +1,9 @@
+{
+  "scenarioVersion": "1.0.0",
+  "id": "g0-error-cancel-recovery-v1",
+  "scenario": {
+    "workspaceFixtureId": "g0-branch-context-provider-v1",
+    "operations": [{ "id": "upstream-error", "operation": "send", "expected": "uncommitted" }, { "id": "retry-after-error", "operation": "retry", "expected": "committed" }, { "id": "stop-stream", "operation": "stop", "expected": "uncommitted" }],
+    "recovery": { "command": "POST /api/chat with operation=retry", "expectedCanonicalChecksum": "history unchanged before retry" }
+  }
+}

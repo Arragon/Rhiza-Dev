@@ -1,0 +1,7 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rhiza.dev/architecture-gates/workspace-fixture/1.0.0",
+  "type": "object", "required": ["fixtureVersion", "id", "workspace"], "additionalProperties": false,
+  "properties": { "fixtureVersion": { "const": "1.0.0" }, "id": { "type": "string" }, "workspace": { "$ref": "#/$defs/workspace" } },
+  "$defs": { "workspace": { "type": "object", "required": ["projectId", "projectTitle", "nodeId", "mode", "contextItems", "messages", "attachments", "fileChunks", "discussionNodes", "discussionEdges", "anchors", "activeNodeId", "manifests", "segments", "auditEvents", "updatedAt"], "additionalProperties": false, "properties": { "projectId": { "type": "string" }, "projectTitle": { "type": "string" }, "nodeId": { "type": "string" }, "mode": { "enum": ["Auto", "Assisted", "Strict"] }, "contextItems": { "type": "array" }, "messages": { "type": "array" }, "attachments": { "type": "array" }, "fileChunks": { "type": "array" }, "discussionNodes": { "type": "array", "minItems": 1 }, "discussionEdges": { "type": "array" }, "anchors": { "type": "array" }, "activeNodeId": { "type": "string" }, "manifests": { "type": "array" }, "segments": { "type": "array" }, "auditEvents": { "type": "array" }, "updatedAt": { "type": "string" } } } }
+}

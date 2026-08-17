@@ -29,14 +29,18 @@ jobs:
       DATABASE_URL: postgresql://rhiza:rhiza@127.0.0.1:5432/rhiza_test
     steps:
       - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.19.0
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run test:unit
-      - run: npm run test:e2e
-      - run: npm run licenses:verify
-      - run: npm run build
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run lint
+      - run: pnpm run typecheck
+      - run: pnpm run test:unit
+      - run: pnpm run test:e2e
+      - run: pnpm run licenses:verify
+      - run: pnpm run verify:g0
+      - run: pnpm run build

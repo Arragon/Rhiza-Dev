@@ -1,0 +1,133 @@
+{
+  "$schema": "https://rhiza.dev/architecture-gates/ci-observation/1.0.0",
+  "schema_version": "1.0.0",
+  "gate_id": "G0",
+  "commit": "bbcb85e1a985f9beffd4caa758f0f328f41cb554",
+  "provenance": {
+    "ci": "github-actions",
+    "repository": "Arragon/Rhiza-Dev",
+    "workflow": "CI",
+    "run_id": "32064755532",
+    "run_attempt": "1",
+    "event_name": "push",
+    "ref": "refs/heads/codex/r0-g0",
+    "sha": "bbcb85e1a985f9beffd4caa758f0f328f41cb554"
+  },
+  "command": "pnpm g0:observe",
+  "environment_profile": {
+    "declared": {
+      "id": "ci-node24-linux-json-store-v1",
+      "runtime": "Node.js 24.19.0",
+      "os": "ubuntu-24.04",
+      "store_adapter": "json fixture / no external network",
+      "warmup_count": 20,
+      "sample_count": 200,
+      "concurrency": 1,
+      "external_network": false
+    },
+    "actual": {
+      "node": "v24.19.0",
+      "os": "linux 6.17.0-1022-azure",
+      "cpu": "AMD EPYC 7763 64-Core Processor",
+      "memory_bytes": 16770748416,
+      "store_adapter": "json"
+    }
+  },
+  "observed_metrics": {
+    "workspace_query_latency_ms": {
+      "metric": "workspace_query_latency_ms",
+      "warmup_count": 20,
+      "sample_count": 200,
+      "concurrency": 1,
+      "external_network": false,
+      "failures": 0,
+      "timeouts": 0,
+      "drops": 0,
+      "p50": 3.098,
+      "p95": 3.716,
+      "p99": 10.46,
+      "max": 18.213
+    },
+    "workspace_command_latency_ms": {
+      "metric": "workspace_command_latency_ms",
+      "warmup_count": 20,
+      "sample_count": 200,
+      "concurrency": 1,
+      "external_network": false,
+      "failures": 0,
+      "timeouts": 0,
+      "drops": 0,
+      "p50": 3.869,
+      "p95": 4.332,
+      "p99": 10.104,
+      "max": 11.348
+    },
+    "legacy_graph_workspace_read_latency_ms": {
+      "metric": "legacy_graph_workspace_read_latency_ms",
+      "warmup_count": 20,
+      "sample_count": 200,
+      "concurrency": 1,
+      "external_network": false,
+      "failures": 0,
+      "timeouts": 0,
+      "drops": 0,
+      "p50": 2.641,
+      "p95": 3.13,
+      "p99": 9.865,
+      "max": 21.327
+    },
+    "context_plan_latency_ms": {
+      "metric": "context_plan_latency_ms",
+      "warmup_count": 20,
+      "sample_count": 200,
+      "concurrency": 1,
+      "external_network": false,
+      "failures": 0,
+      "timeouts": 0,
+      "drops": 0,
+      "p50": 4.65,
+      "p95": 8.79,
+      "p99": 22.431,
+      "max": 25.671
+    },
+    "stream_chat_commit_latency_ms": {
+      "metric": "stream_chat_commit_latency_ms",
+      "warmup_count": 20,
+      "sample_count": 200,
+      "concurrency": 1,
+      "external_network": false,
+      "failures": 0,
+      "timeouts": 0,
+      "drops": 0,
+      "p50": 11.328,
+      "p95": 22.803,
+      "p99": 23.622,
+      "max": 23.979
+    }
+  },
+  "checksums": {
+    "G0/snapshots/api.json": {
+      "algorithm": "sha256",
+      "value": "fefc7299e0b7501075cc7e3e947fa535633c208841071490dfd8ac660f511d13"
+    },
+    "G0/snapshots/db.json": {
+      "algorithm": "sha256",
+      "value": "8652484269e0e5ba18b0e7897988b97f1af3b80e6697317b86089fa2d17f6580"
+    },
+    "G0/snapshots/schema-index.json": {
+      "algorithm": "sha256",
+      "value": "fa5ad987f898173a4d9eea85d4aa9f9da27d9a8dcbbacd222721d85e31cdce64"
+    },
+    "fixture-registry.json": {
+      "algorithm": "sha256",
+      "value": "372cb0d86406e53beb19c00a211ff8116da581b34cb05d3aa28c055e1d978dc0"
+    },
+    "performance-profile.json": {
+      "algorithm": "sha256",
+      "value": "ef5d727d49002ea71da3e06352581b9cbd0d1d1ee0aff7162278b358c3f42289"
+    }
+  },
+  "started_at": "2026-08-17T20:16:11.867Z",
+  "completed_at": "2026-08-17T20:16:19.954Z",
+  "result": "pass"
+}

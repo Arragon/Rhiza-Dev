@@ -1,0 +1,13 @@
+{
+  "$schema": "https://rhiza.dev/architecture-gates/ci-performance-baseline-attestation/1.0.0",
+  "schema_version": "1.0.0",
+  "gate_id": "G0",
+  "observation_path": "G0/ci-performance-baseline.json",
+  "observation_sha256": "63ce4415fab6b58cb00b0bedba716215aff066eca4ff94b89043814b2f6f1542",
+  "github": {
+    "run_url": "https://github.com/Arragon/Rhiza-Dev/actions/runs/32064755532",
+    "artifact_id": "9299491312",
+    "artifact_name": "g0-evidence-32064755532-1",
+    "artifact_digest": "sha256:b95ddd4e0ae51c57a1c3a100b05b09e3b18d30fed96c9d292228df0316c81eb3"
+  }
+}

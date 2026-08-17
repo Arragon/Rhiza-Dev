@@ -465,6 +465,50 @@ function observationOutputPath(): string {
   return join(runnerTemp, 'g0-evidence.json');
 }
 
+async function verifyCiPerformanceBaseline(
+  validator: Ajv2020,
+  profile: JsonObject,
+  expectedChecksums: Record<string, string>,
+): Promise<void> {
+  const observationPath = join(gates, 'G0/ci-performance-baseline.json');
+  const attestationPath = join(gates, 'G0/ci-performance-baseline-attestation.json');
+  const rawObservation = await readFile(observationPath);
+  const observation = JSON.parse(rawObservation.toString('utf8')) as JsonObject;
+  const attestation = await readJson<JsonObject>(attestationPath);
+  assertValid(validator, 'https://rhiza.dev/architecture-gates/ci-observation/1.0.0', observation);
+  assertValid(validator, 'https://rhiza.dev/architecture-gates/ci-performance-baseline-attestation/1.0.0', attestation);
+
+  if (attestation.observation_path !== 'G0/ci-performance-baseline.json') fail('CI performance attestation path drift');
+  if (attestation.observation_sha256 !== sha256(rawObservation).replace(/^sha256:/, '')) fail('CI performance observation checksum drift');
+  const provenance = observation.provenance as JsonObject;
+  if (provenance.ci !== 'github-actions' || provenance.event_name !== 'push' || provenance.repository !== 'Arragon/Rhiza-Dev') {
+    fail('CI performance observation provenance must be a GitHub Actions push from Arragon/Rhiza-Dev');
+  }
+  if (observation.commit !== provenance.sha) fail('CI performance observation commit and provenance SHA differ');
+  assertArchivedEvidenceCommit(observation.commit);
+  const environment = observation.environment_profile as JsonObject;
+  if (canonicalize(environment.declared) !== canonicalize(profile)) fail('CI performance declared environment profile drift');
+
+  const expectedMetrics = ['workspace_query_latency_ms', 'workspace_command_latency_ms', 'legacy_graph_workspace_read_latency_ms', 'context_plan_latency_ms', 'stream_chat_commit_latency_ms'];
+  const metrics = observation.observed_metrics as Record<string, Metric>;
+  if (Object.keys(metrics).sort().join('|') !== expectedMetrics.sort().join('|')) fail('CI performance metric key drift');
+  for (const metric of Object.values(metrics)) {
+    if (metric.warmup_count !== 20 || metric.sample_count !== 200 || metric.concurrency !== 1 || metric.external_network !== false
+      || metric.failures !== 0 || metric.timeouts !== 0 || metric.drops !== 0) {
+      fail(`CI performance metric counts drift: ${metric.metric}`);
+    }
+  }
+  const checksums = observation.checksums as JsonObject;
+  if (Object.keys(checksums).sort().join('|') !== Object.keys(expectedChecksums).sort().join('|')) fail('CI performance checksum key drift');
+  for (const [path, digest] of Object.entries(expectedChecksums)) {
+    const record = checksums[path] as JsonObject | undefined;
+    if (!record || record.algorithm !== 'sha256' || record.value !== digest.replace(/^sha256:/, '')) {
+      fail(`CI performance checksum drift: ${path}`);
+    }
+  }
+  if (observation.result !== 'pass') fail('CI performance observation result is not pass');
+}
+
 async function run(): Promise<void> {
   const startedAt = new Date().toISOString();
   if (update && (writeEvidence || writeObservation)) fail('--update cannot be combined with evidence output');
@@ -523,6 +567,7 @@ async function run(): Promise<void> {
       for (const metric of Object.values(recorded)) {
         if (metric.warmup_count !== 20 || metric.sample_count !== 200 || metric.failures !== 0 || metric.timeouts !== 0 || metric.drops !== 0) fail(`archived evidence metric counts drift: ${metric.metric}`);
       }
+      await verifyCiPerformanceBaseline(validator, profile, expectedChecksums);
     }
     if (!writeObservation) return;
   }

@@ -3,7 +3,7 @@
   "schema_version": "1.0.0",
   "gate_id": "G0",
   "architecture_version": "0818-v3.0",
-  "commit": "717b4192fc379ed6bf2e33df2684279771393bdf",
+  "commit": "5b1416f77162d1604fceea66712c5ac936679a81",
   "baseline": {
     "commit": "b29d94fb034678e0c9d5660848e92e995311d4da",
     "tag": "pre-0815-engineering-baseline",
@@ -51,10 +51,10 @@
       "failures": 0,
       "timeouts": 0,
       "drops": 0,
-      "p50": 1.721,
-      "p95": 3.209,
-      "p99": 4.973,
-      "max": 6.947
+      "p50": 1.561,
+      "p95": 3.4,
+      "p99": 5.151,
+      "max": 10.705
     },
     "workspace_command_latency_ms": {
       "metric": "workspace_command_latency_ms",
@@ -65,10 +65,10 @@
       "failures": 0,
       "timeouts": 0,
       "drops": 0,
-      "p50": 2.78,
-      "p95": 3.426,
-      "p99": 5.901,
-      "max": 51.164
+      "p50": 2.573,
+      "p95": 4.153,
+      "p99": 16.356,
+      "max": 41.12
     },
     "legacy_graph_workspace_read_latency_ms": {
       "metric": "legacy_graph_workspace_read_latency_ms",
@@ -79,10 +79,10 @@
       "failures": 0,
       "timeouts": 0,
       "drops": 0,
-      "p50": 1.588,
-      "p95": 2.851,
-      "p99": 5.384,
-      "max": 6.328
+      "p50": 1.276,
+      "p95": 3.059,
+      "p99": 4.78,
+      "max": 5.834
     },
     "context_plan_latency_ms": {
       "metric": "context_plan_latency_ms",
@@ -93,10 +93,10 @@
       "failures": 0,
       "timeouts": 0,
       "drops": 0,
-      "p50": 2.662,
-      "p95": 3.65,
-      "p99": 9.296,
-      "max": 11.065
+      "p50": 3.219,
+      "p95": 7.238,
+      "p99": 11.137,
+      "max": 12.14
     },
     "stream_chat_commit_latency_ms": {
       "metric": "stream_chat_commit_latency_ms",
@@ -107,42 +107,42 @@
       "failures": 0,
       "timeouts": 0,
       "drops": 0,
-      "p50": 6.339,
-      "p95": 10.545,
-      "p99": 11.935,
-      "max": 14.242
+      "p50": 9.425,
+      "p95": 16.644,
+      "p99": 24.26,
+      "max": 91.131
     }
   },
   "absolute_metrics": {
     "workspace_query_latency_ms": {
-      "p50": 1.721,
-      "p95": 3.209,
-      "p99": 4.973,
-      "max": 6.947
+      "p50": 1.561,
+      "p95": 3.4,
+      "p99": 5.151,
+      "max": 10.705
     },
     "workspace_command_latency_ms": {
-      "p50": 2.78,
-      "p95": 3.426,
-      "p99": 5.901,
-      "max": 51.164
+      "p50": 2.573,
+      "p95": 4.153,
+      "p99": 16.356,
+      "max": 41.12
     },
     "legacy_graph_workspace_read_latency_ms": {
-      "p50": 1.588,
-      "p95": 2.851,
-      "p99": 5.384,
-      "max": 6.328
+      "p50": 1.276,
+      "p95": 3.059,
+      "p99": 4.78,
+      "max": 5.834
     },
     "context_plan_latency_ms": {
-      "p50": 2.662,
-      "p95": 3.65,
-      "p99": 9.296,
-      "max": 11.065
+      "p50": 3.219,
+      "p95": 7.238,
+      "p99": 11.137,
+      "max": 12.14
     },
     "stream_chat_commit_latency_ms": {
-      "p50": 6.339,
-      "p95": 10.545,
-      "p99": 11.935,
-      "max": 14.242
+      "p50": 9.425,
+      "p95": 16.644,
+      "p99": 24.26,
+      "max": 91.131
     }
   },
   "regression_vs_g0": {
@@ -166,11 +166,15 @@
     },
     "G0/snapshots/schema-index.json": {
       "algorithm": "sha256",
-      "value": "2af3a67e027f03393970a6aa16f7e7fe86f83de8561818b577e757c896a00525"
+      "value": "fa5ad987f898173a4d9eea85d4aa9f9da27d9a8dcbbacd222721d85e31cdce64"
     },
     "fixture-registry.json": {
       "algorithm": "sha256",
       "value": "372cb0d86406e53beb19c00a211ff8116da581b34cb05d3aa28c055e1d978dc0"
+    },
+    "performance-profile.json": {
+      "algorithm": "sha256",
+      "value": "ef5d727d49002ea71da3e06352581b9cbd0d1d1ee0aff7162278b358c3f42289"
     }
   },
   "artifact_descriptors": [
@@ -201,6 +205,13 @@
       "media_type": "application/json",
       "canonicalization_version": "jcs-like-key-sort-v1",
       "checksum_ref": "fixture-registry.json"
+    },
+    {
+      "artifact_id": "g0-artifact-5",
+      "path": "performance-profile.json",
+      "media_type": "application/json",
+      "canonicalization_version": "jcs-like-key-sort-v1",
+      "checksum_ref": "performance-profile.json"
     }
   ],
   "failure_classification": [],
@@ -225,7 +236,7 @@
     }
   ],
   "known_exceptions": [],
-  "started_at": "2026-08-17T19:45:32.946Z",
-  "completed_at": "2026-08-17T19:45:42.331Z",
+  "started_at": "2026-08-17T20:01:43.775Z",
+  "completed_at": "2026-08-17T20:01:55.141Z",
   "result": "pass"
 }

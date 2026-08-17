@@ -1,0 +1,231 @@
+{
+  "$schema": "https://rhiza.dev/architecture-gates/evidence-manifest/1.0.0",
+  "schema_version": "1.0.0",
+  "gate_id": "G0",
+  "architecture_version": "0818-v3.0",
+  "commit": "717b4192fc379ed6bf2e33df2684279771393bdf",
+  "baseline": {
+    "commit": "b29d94fb034678e0c9d5660848e92e995311d4da",
+    "tag": "pre-0815-engineering-baseline",
+    "tag_object_type": "annotated",
+    "signature_status": "unsigned",
+    "signature_reason": "No repository signing key was configured; object type and peeled commit were verified."
+  },
+  "fixture_id": "g0-fixture-registry-v1",
+  "fixture_digest": "sha256:372cb0d86406e53beb19c00a211ff8116da581b34cb05d3aa28c055e1d978dc0",
+  "command": "pnpm g0:evidence",
+  "environment_profile": {
+    "declared": {
+      "id": "ci-node24-linux-json-store-v1",
+      "runtime": "Node.js 24.x",
+      "os": "ubuntu-latest",
+      "store_adapter": "json fixture / no external network",
+      "warmup_count": 20,
+      "sample_count": 200,
+      "concurrency": 1,
+      "external_network": false
+    },
+    "actual": {
+      "node": "v24.19.0",
+      "os": "darwin 25.5.0",
+      "cpu": "Apple A18 Pro",
+      "memory_bytes": 8589934592,
+      "store_adapter": "json"
+    }
+  },
+  "thresholds": {
+    "warmup_count": 20,
+    "sample_count": 200,
+    "external_network": false,
+    "failures": 0,
+    "timeouts": 0,
+    "drops": 0
+  },
+  "observed_metrics": {
+    "workspace_query_latency_ms": {
+      "metric": "workspace_query_latency_ms",
+      "warmup_count": 20,
+      "sample_count": 200,
+      "concurrency": 1,
+      "external_network": false,
+      "failures": 0,
+      "timeouts": 0,
+      "drops": 0,
+      "p50": 1.721,
+      "p95": 3.209,
+      "p99": 4.973,
+      "max": 6.947
+    },
+    "workspace_command_latency_ms": {
+      "metric": "workspace_command_latency_ms",
+      "warmup_count": 20,
+      "sample_count": 200,
+      "concurrency": 1,
+      "external_network": false,
+      "failures": 0,
+      "timeouts": 0,
+      "drops": 0,
+      "p50": 2.78,
+      "p95": 3.426,
+      "p99": 5.901,
+      "max": 51.164
+    },
+    "legacy_graph_workspace_read_latency_ms": {
+      "metric": "legacy_graph_workspace_read_latency_ms",
+      "warmup_count": 20,
+      "sample_count": 200,
+      "concurrency": 1,
+      "external_network": false,
+      "failures": 0,
+      "timeouts": 0,
+      "drops": 0,
+      "p50": 1.588,
+      "p95": 2.851,
+      "p99": 5.384,
+      "max": 6.328
+    },
+    "context_plan_latency_ms": {
+      "metric": "context_plan_latency_ms",
+      "warmup_count": 20,
+      "sample_count": 200,
+      "concurrency": 1,
+      "external_network": false,
+      "failures": 0,
+      "timeouts": 0,
+      "drops": 0,
+      "p50": 2.662,
+      "p95": 3.65,
+      "p99": 9.296,
+      "max": 11.065
+    },
+    "stream_chat_commit_latency_ms": {
+      "metric": "stream_chat_commit_latency_ms",
+      "warmup_count": 20,
+      "sample_count": 200,
+      "concurrency": 1,
+      "external_network": false,
+      "failures": 0,
+      "timeouts": 0,
+      "drops": 0,
+      "p50": 6.339,
+      "p95": 10.545,
+      "p99": 11.935,
+      "max": 14.242
+    }
+  },
+  "absolute_metrics": {
+    "workspace_query_latency_ms": {
+      "p50": 1.721,
+      "p95": 3.209,
+      "p99": 4.973,
+      "max": 6.947
+    },
+    "workspace_command_latency_ms": {
+      "p50": 2.78,
+      "p95": 3.426,
+      "p99": 5.901,
+      "max": 51.164
+    },
+    "legacy_graph_workspace_read_latency_ms": {
+      "p50": 1.588,
+      "p95": 2.851,
+      "p99": 5.384,
+      "max": 6.328
+    },
+    "context_plan_latency_ms": {
+      "p50": 2.662,
+      "p95": 3.65,
+      "p99": 9.296,
+      "max": 11.065
+    },
+    "stream_chat_commit_latency_ms": {
+      "p50": 6.339,
+      "p95": 10.545,
+      "p99": 11.935,
+      "max": 14.242
+    }
+  },
+  "regression_vs_g0": {
+    "reason": "G0 is the initial baseline; later gates compare against these absolute metrics.",
+    "metrics": {
+      "workspace_query_latency_ms": null,
+      "workspace_command_latency_ms": null,
+      "legacy_graph_workspace_read_latency_ms": null,
+      "context_plan_latency_ms": null,
+      "stream_chat_commit_latency_ms": null
+    }
+  },
+  "checksums": {
+    "G0/snapshots/api.json": {
+      "algorithm": "sha256",
+      "value": "fefc7299e0b7501075cc7e3e947fa535633c208841071490dfd8ac660f511d13"
+    },
+    "G0/snapshots/db.json": {
+      "algorithm": "sha256",
+      "value": "8652484269e0e5ba18b0e7897988b97f1af3b80e6697317b86089fa2d17f6580"
+    },
+    "G0/snapshots/schema-index.json": {
+      "algorithm": "sha256",
+      "value": "2af3a67e027f03393970a6aa16f7e7fe86f83de8561818b577e757c896a00525"
+    },
+    "fixture-registry.json": {
+      "algorithm": "sha256",
+      "value": "372cb0d86406e53beb19c00a211ff8116da581b34cb05d3aa28c055e1d978dc0"
+    }
+  },
+  "artifact_descriptors": [
+    {
+      "artifact_id": "g0-artifact-1",
+      "path": "G0/snapshots/api.json",
+      "media_type": "application/json",
+      "canonicalization_version": "jcs-like-key-sort-v1",
+      "checksum_ref": "G0/snapshots/api.json"
+    },
+    {
+      "artifact_id": "g0-artifact-2",
+      "path": "G0/snapshots/db.json",
+      "media_type": "application/json",
+      "canonicalization_version": "jcs-like-key-sort-v1",
+      "checksum_ref": "G0/snapshots/db.json"
+    },
+    {
+      "artifact_id": "g0-artifact-3",
+      "path": "G0/snapshots/schema-index.json",
+      "media_type": "application/json",
+      "canonicalization_version": "jcs-like-key-sort-v1",
+      "checksum_ref": "G0/snapshots/schema-index.json"
+    },
+    {
+      "artifact_id": "g0-artifact-4",
+      "path": "fixture-registry.json",
+      "media_type": "application/json",
+      "canonicalization_version": "jcs-like-key-sort-v1",
+      "checksum_ref": "fixture-registry.json"
+    }
+  ],
+  "failure_classification": [],
+  "failure_injection_checkpoint": {
+    "checkpoint": "stream-before-commit",
+    "injection_command": "pnpm exec vitest run e2e/provider-stream.e2e.test.ts",
+    "expected": "Stop aborts the upstream stream and leaves persisted history unchanged."
+  },
+  "recovery_command": "POST /api/chat with operation=retry",
+  "manual_evidence_links": [
+    {
+      "item": "100-node one-hour browser stability",
+      "status": "pending",
+      "path": "docs/M6_ACCEPTANCE.md",
+      "target_work_package": "WP-2.1"
+    },
+    {
+      "item": "real external-user usability validation and P0/P1 closure",
+      "status": "pending",
+      "path": "docs/M6_ACCEPTANCE.md",
+      "target_work_package": "WP-2.3"
+    }
+  ],
+  "known_exceptions": [],
+  "started_at": "2026-08-17T19:45:32.946Z",
+  "completed_at": "2026-08-17T19:45:42.331Z",
+  "result": "pass"
+}

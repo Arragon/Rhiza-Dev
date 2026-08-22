@@ -322,6 +322,7 @@ content-addressed BlobStore · bounded Transient Stream · workspace.rhiza Bundl
 | A3 | 移除入库 zip 与 var/data 快照,补 .gitignore,全仓库跑一次 secret 扫描 | P0-3 |
 | A4 | ESLint 分区边界规则替换正则测试 | P1-2 |
 | A5 | 文档修正:librechat-migration.md 标 superseded;archive/* 加头注;architecture.md M2 表述更新;Gate 分级决定(P2-1)写入 gates README | §1.2, P2-1 |
+| A6 | 修复 G0 API snapshot 提取器:路由提取正则仅匹配 `get\|post\|patch\|delete`,漏记 `PUT /api/providers/:id`(实际 25 条路由,`api.json` 只有 24 条),快照与 checksum 需重生成 | 附录 §10 |
 
 ## 当前 Phase 内、按既定 Milestone 处理
 
@@ -364,12 +365,13 @@ content-addressed BlobStore · bounded Transient Stream · workspace.rhiza Bundl
 
 **已代码验证:** §2.1 表格全部十项;G0 evidence/基线数字;planner 复杂度与实测;存储适配器行为;Runtime 契约;边界测试内容;ADR 缺失;单 Workspace 单例;pause/resume 在 v3.0 全文缺失;zip/var-data 入库。
 
+**已代码验证(补充,经独立代码核查子任务复核):** G0 `api.json` 快照漏记 PUT 路由(提取正则缺陷,见 A6);`libreChatRuntime`/`fileContext` 两个 feature flag 已定义但无任何消费分支(仅 `postgresPersistence` 被 `index.ts` 使用);`vendor/librechat-runtime/` 目前仅含 README;入库的 `Rhiza-Dev-*` 目录不含源码,仅运行时数据快照;e2e 覆盖 provider SSE/Stop 不落库、PGlite 三迁移正反向、1000+ 事件顺序恢复与真库幂等迁移;全仓库共 16 个测试文件、约 69 个用例。
+
 **需要代码验证(本次未逐项核实):**
 
 1. `.github/workflows/ci.yml` 的实际门禁范围与 G0 observe job 的运行状态(仅确认文件存在)。
 2. `codex/rhiza-librechat-runtime` 与 `codex/r0-g0` 远程分支的内容及其与 main 的关系(librechat-migration.md 所述 `librechat-v0.8.7` 基线分支未见于当前 remote 列表,需确认是否在别处托管)。
 3. 入库运行时快照文件的完整内容是否含任何敏感数据(仅抽查了 providers.json 头部)。
-4. `e2e/` 各用例与 `scripts/architecture-gates/verify-g0.ts`(689 行)的内部实现细节(仅读了 README 与调用面)。
-5. M1 验收所述 UI 能力(Reasoning/Tool Call/Usage 展示等)在前端组件中的完整度(仅核对了后端契约存在)。
+4. M1 验收所述 UI 能力(Reasoning/Tool Call/Usage 展示等)在前端组件中的完整度(仅核对了后端契约存在)。
 
 本报告若与 v3.0 冲突,除 P0/P1 各项与 §7 的六条路线修订外,以 v3.0 为准;上述修订建议通过新增 ADR 的方式并入基线,而不是直接改写 v3.0 正文。

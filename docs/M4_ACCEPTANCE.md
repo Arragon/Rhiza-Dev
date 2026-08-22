@@ -1,5 +1,7 @@
 # M4 Acceptance — Explicit Context + Immutable Manifest
 
+> **Historical Evidence Only(2026-08-22)**:本文件是 Legacy 里程碑验收证据,其编号不定义当前 Milestone。当前基线见 `docs/Rhiza_开发路线图_V4.0_20260822.md`(统一 M01+ 编号)。
+
 ## 结论
 
 M4 已完成。每次正式模型调用都会冻结唯一 Context Manifest；用户可以在 Context Inspector 中查看 Active / Recommended / Excluded 清单，将 Node 或 Segment 加入上下文，并对条目执行 Pin、移除、排除和恢复。历史 AI 回答可展开查看当时的来源快照、加入原因、选择方式、内容版本、token 估算、模型和 request ID。

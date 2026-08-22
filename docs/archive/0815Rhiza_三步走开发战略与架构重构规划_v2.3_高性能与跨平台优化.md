@@ -1,6 +1,8 @@
 # Rhiza 三步走开发战略与架构重构规划 v2.3
 
-> 文档状态：战略基线 / Architecture Baseline  
+> **Superseded(2026-08-22)**:本文档已被 Rhiza Architecture & Roadmap Baseline V4.0 取代,不再定义当前架构或开发计划,仅作战略背景与 Historical Evidence 保留。现行基线:`docs/Rhiza_技术架构设计书_V4.0_20260822.md` 与 `docs/Rhiza_开发路线图_V4.0_20260822.md`。
+
+> 文档状态：战略基线 / Architecture Baseline（已废止）  
 > 日期：2026-08-15  
 > 适用范围：当前 Phase 1（已开发至 M6）及后续长期路线  
 > 核心目标：以长期可演进架构为优先，允许对 M0–M6 进行必要重构；同时把运行效率、高频 Trace 吞吐、Headless Core、多平台 Host 适配和 Workspace 可移植性作为第一等架构约束。

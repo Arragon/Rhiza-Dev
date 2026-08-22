@@ -1,6 +1,8 @@
 # Rhiza 三步走开发路线指南 v1.0
 
-> 文档状态：施工路线 / Delivery Roadmap
+> **Superseded(2026-08-22)**:本文档已被《Rhiza 开发路线图 V4.0》取代;其中的 WP/R/G 编号体系已废止,当前开发只使用统一的 M01+ 编号。仅作 Historical Evidence 保留。现行基线:`docs/Rhiza_开发路线图_V4.0_20260822.md`。
+
+> 文档状态：施工路线 / Delivery Roadmap（已废止）
 > 日期：2026-08-18
 > 适用范围：从 Legacy-M0..M6 基线迁移至 Phase 1 Productization，以及其后的长期产品演进
 > 读者：产品、架构、工程、测试与运营负责人

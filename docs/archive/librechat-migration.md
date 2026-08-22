@@ -1,5 +1,7 @@
 # Rhiza LibreChat Migration Baseline
 
+> **Superseded(2026-08-22)**:本文档描述的迁移策略与"clean-base 前不合并功能代码"等门槛已实质过时并废止;LibreChat 仅作为 Runtime Adapter 边界(见 V4.0 架构书 §7.6)。upstream commit 锁定等信息仅作历史参考。现行基线:`docs/Rhiza_技术架构设计书_V4.0_20260822.md`。
+
 ## 1. Purpose
 
 本文依据《ContextGraph 技术设计书 v2.0》记录当前交互 MVP 向 LibreChat v0.8.7 clean-base 迁移时的边界。当前仓库不包含 LibreChat 源码或对应 Git 分支，因此本次完成的是可复用的产品层与视觉层迁移，不把缺失的 Runtime 和基础设施标记为已完成。

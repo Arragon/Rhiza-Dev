@@ -1,6 +1,8 @@
 # Rhiza 架构评审报告 v1.0
 
-> 文档状态:系统性 Architecture Review / 独立评审意见
+> **Historical Evidence(2026-08-22)**:本评审的结论与整改建议已吸收进 Rhiza Architecture & Roadmap Baseline V4.0,本文不再单独定义整改方案。现行基线:`docs/Rhiza_技术架构设计书_V4.0_20260822.md` 与 `docs/Rhiza_开发路线图_V4.0_20260822.md`。
+
+> 文档状态:系统性 Architecture Review / 独立评审意见（已吸收归档）
 > 日期:2026-08-22
 > 评审范围:`docs/` 全部架构文档(0815 v2.3、0818 v3.0、0818 路线指南 v1.0、architecture.md、librechat-migration.md、M0–M6 验收、architecture-gates)+ 当前 `main` 分支全部核心代码(`server/`、`src/`、`db/migrations/`、`scripts/architecture-gates/`)
 > 评审立场:不追求"更先进"的架构,只判断当前设计是否稳定、合理、高效、可维护,并能以较低迁移成本支撑长期演进

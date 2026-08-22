@@ -1,5 +1,7 @@
 # M5 Acceptance — Context Planner MVP + Files
 
+> **Historical Evidence Only(2026-08-22)**:本文件是 Legacy 里程碑验收证据,其编号不定义当前 Milestone。当前基线见 `docs/Rhiza_开发路线图_V4.0_20260822.md`(统一 M01+ 编号)。
+
 ## 结论
 
 M5 已完成。聊天前由确定性的本地 Context Planner 统一生成上下文投影：Node、Segment 与 File chunk 进入同一 Candidate 集，融合词法命中、离线语义向量和图距离排序；显式 Context 先占预算，自动结果只能使用剩余预算。每个自动来源的选择原因、得分相关信号和 Planner 指标都会冻结进 Context Manifest。

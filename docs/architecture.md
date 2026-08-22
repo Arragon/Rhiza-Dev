@@ -1,5 +1,7 @@
 # Project Architecture
 
+> **文档地位(2026-08-22 起)**:本文是 **Current Implementation Snapshot**,仅描述已部署实现的现状,不承载目标架构设计。目标架构与开发计划的唯一权威是 `docs/Rhiza_技术架构设计书_V4.0_20260822.md` 与 `docs/Rhiza_开发路线图_V4.0_20260822.md`。本文存在若干与代码不一致的过时表述(如 M2 完成度、PostgreSQL 事务边界、G0 状态等),逐项核对以 `docs/项目现状.md` 与代码为准;本文的系统性修订属于路线图 M01。
+
 ## 1. Overview
 
 根系（Rhiza）是基于产品设计书构建的全栈网页端 MVP。它验证“对话网络 + 显式上下文 + 当前知识状态”的核心产品命题，并通过动态 Provider Registry 连接多个 OpenAI-compatible 模型供应商。项目和模型目录以原子 JSON 文件持久化，API Key 使用本机 AES-256-GCM 密钥加密。

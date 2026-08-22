@@ -1,5 +1,7 @@
 # M6 Acceptance — Product UX Hardening
 
+> **Historical Evidence Only(2026-08-22)**:本文件是 Legacy 里程碑验收证据,其编号不定义当前 Milestone。当前基线见 `docs/Rhiza_开发路线图_V4.0_20260822.md`(统一 M01+ 编号)。
+
 ## 验收映射
 
 - [x] 首次进入可理解 Project / Node / Graph / Context：首次引导逐项解释四个概念，并可从“帮助与快捷键”再次打开。
